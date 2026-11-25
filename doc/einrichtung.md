@@ -33,17 +33,22 @@ Ohne Webhook funktioniert alles, die Oberfläche fragt dann nur einmal pro Minut
 ## 2. Prüfung in den Datenrepos
 
 `templates/validate.yml` nach `.github/workflows/validate.yml` kopieren, in `contents`, `contents-staging` und
-`contents-dev`. Die Prüfung heißt `validate` und läuft bei jedem Pull Request. Sie prüft jeden Eintrag und die
-Verweise der Einträge untereinander (`npm run validate-repo -- <Ordner>` im Editor-Repo macht dasselbe lokal).
+`contents-dev` (nur einmal: die Vorlage ruft den Workflow aus dem Editor-Repo auf, `.github/workflows/validate.yml`
+dort; was geprüft und gebaut wird, ändert sich also an einer Stelle). Die Prüfung läuft bei jedem Pull Request und prüft
+jeden Eintrag und die Verweise der Einträge untereinander (`npm run validate-repo -- <Ordner>` im Editor-Repo macht
+dasselbe lokal). Bei jedem Push auf `main` baut sie zusätzlich den Index (siehe unten).
 
-In der Vorlage steht `hallo-schnackenburg/editor` als Repo des Editors; anpassen, falls es anders heißt.
+Der Job der Vorlage heißt `validate`, die Prüfungen daher `validate / validate` und `validate / index`.
+
+In der Vorlage und im Workflow steht `hallo-schnackenburg/editor` als Repo des Editors; anpassen, falls es anders heißt.
+Ist das Editor-Repo privat, muss es unter Settings → Actions → General → Access Zugriff aus anderen Repos erlauben.
 
 ## 3. `main` schützen
 
 Repository → Settings → Rules → Rulesets (oder Branches → Branch protection rule) für `main`:
 
 - *Require a pull request before merging* (keine Freigaben nötig, es gibt keine Rollen)
-- *Require status checks to pass*: `validate`
+- *Require status checks to pass*: `validate / validate`
 - *Block force pushes*
 
 Damit kann niemand am Editor vorbei Ungültiges nach `main` bringen, und „Übernehmen“ klappt erst, wenn die Prüfung
@@ -79,4 +84,4 @@ Der alte Branch `edit/<login>` aus der ersten Version wird nicht mehr benutzt un
 
 ## Index
 
-Die Vorlage hat einen zweiten Job `index`. Er läuft nach jedem Push auf `main`, nachdem `validate` grün war, baut aus den Einträgen eine `index.json` (eine Zeile pro Datei) und eine `entries.ndjson.gz` (die Texte aller Einträge, gepackt; der Editor lädt sie einmal beim ersten Start) und legt beide als einzigen Commit auf den Branch `index` des Datenrepos (wird jedes Mal ersetzt). Der Job braucht nur das mitgelieferte Token (`contents: write`). Ist `main` durch Branch-Schutz gesperrt, gilt das nicht für den Branch `index`; ein Schutz darauf wäre zu lassen.
+Der Workflow hat einen zweiten Job `index`. Er läuft nach jedem Push auf `main`, nachdem die Prüfung grün war, baut aus den Einträgen eine `index.json` (eine Zeile pro Datei) und eine `entries.ndjson.gz` (die Texte aller Einträge, gepackt; der Editor lädt sie einmal beim ersten Start) und legt beide als einzigen Commit auf den Branch `index` des Datenrepos (wird jedes Mal ersetzt). Der Job braucht nur das mitgelieferte Token (`contents: write`). Ist `main` durch Branch-Schutz gesperrt, gilt das nicht für den Branch `index`; ein Schutz darauf wäre zu lassen.
