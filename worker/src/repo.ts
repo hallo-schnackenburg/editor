@@ -12,7 +12,8 @@
 
 import { FOLDER_PATH, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml, type Issue } from '@contents-editor/core'
 import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, readEntries, refPath } from './common.js'
-import { Repo, call } from './github.js'
+import { call } from './github.js'
+import { Repo } from './repository.js'
 import type { GithubEnv } from './github.js'
 import { pullFor } from './submissions.js'
 import type { Auth } from './session.js'

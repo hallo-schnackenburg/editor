@@ -12,8 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@contents-editor/core": "*",
-    "editors-core": "github:hallo-schnackenburg/editors-core#v0.2.0"
+    "@contents-editor/core": "*"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
