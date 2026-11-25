@@ -1,6 +1,5 @@
 // The entries of the data repository: reading them, saving one, removing one, always as the signed-in person.
 //
-//   GET    /repo/entries[?branch=submission/…]   every entry of that submission's branch (or of the base branch, if there is no branch yet)
 //   GET    /repo/index[?branch=submission/…]     one line per entry instead of the entries (index-read.ts): as of the newest commit of the base branch,
 //                                            plus what that submission's branch changes
 //   GET    /repo/bundle                      the texts of all entries in one gzip file (made by CI next to the index), for the first start of the editor
@@ -15,8 +14,8 @@
 // base branch and opens the pull request as a draft, with the name the person gave the submission as its title.
 // Nothing invalid is written: an entry has to pass the checks of core (schema, path, files, text) first.
 
-import { FOLDER_PATH, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml, type Issue } from '@contents-editor/core'
-import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, readEntries, refPath } from './common.js'
+import { FOLDER_PATH, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml, type Issue } from '@editor/core'
+import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, refPath } from './common.js'
 import { call } from './github.js'
 import { Repo } from './repository.js'
 import type { GithubEnv } from './github.js'
@@ -86,19 +85,12 @@ async function afterCommit(prepared: Awaited<ReturnType<typeof prepare>>, reposi
 }
 
 export async function handleRepo(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
-  if (route !== '/repo/entries' && route !== '/repo/index' && route !== '/repo/bundle' && route !== '/repo/read' && route !== '/repo/entry' && route !== '/repo/commit') return null
+  if (route !== '/repo/index' && route !== '/repo/bundle' && route !== '/repo/read' && route !== '/repo/entry' && route !== '/repo/commit') return null
   const repo = env.DATA_REPO
   const base = env.BASE_BRANCH ?? 'main'
   if (!repo) return json({ error: 'The server has no DATA_REPO.' }, 500)
 
   try {
-    if (route === '/repo/entries' && request.method === 'GET') {
-      const given = new URL(request.url).searchParams.get('branch')
-      const branch = given === null ? undefined : branchOf(given)
-      const exists = branch !== undefined && !!(await headOf(session.access, repo, branch, fetchFn))
-      return json({ base, branch: branch ?? null, exists, entries: await readEntries(session.access, repo, exists ? branch! : base, fetchFn) })
-    }
-
     if (route === '/repo/index' && request.method === 'GET') {
       const given = new URL(request.url).searchParams.get('branch')
       const branch = given === null ? undefined : branchOf(given)

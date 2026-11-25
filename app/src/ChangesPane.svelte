@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MODEL } from '@contents-editor/core'
+  import { MODEL } from '@editor/core'
   import { shownTitle, titleOf, typeOf } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
 

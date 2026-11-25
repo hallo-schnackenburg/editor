@@ -11,7 +11,7 @@
 //
 // There are no roles of our own: GitHub decides who may do what (collaborators, branch protection, required checks).
 
-import { authorOf, isSubmissionBranch } from '@contents-editor/core'
+import { authorOf, isSubmissionBranch } from '@editor/core'
 import { ENTRY_PATH, Refused, failure, json, readBlobs, readBody, refPath } from './common.js'
 import { GitHubError, call } from './github.js'
 import type { GithubEnv } from './github.js'

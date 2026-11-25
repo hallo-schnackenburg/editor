@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets } from '../src/logic.js'
+import { describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets, movedFile, renumbered } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -264,5 +264,31 @@ describe('objects in the form', () => {
     const photo = makeEntry('objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ae\ntype: object\nkind: image\ntitle: F\nparents: [01kb4z8m3q7xv2n5r6t9c0d1ac]\n', 'sha')
     const notGroup = makeEntry('objects/ac/01kb4z8m3q7xv2n5r6t9c0d1ac.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ac\ntype: object\nkind: image\ntitle: G\n', 'sha')
     expect(issuesOf(photo, [photo, notGroup]).map((i) => i.message)).toEqual(['"01kb4z8m3q7xv2n5r6t9c0d1ac" is not a group'])
+  })
+})
+
+describe('the order of files', () => {
+  const page = (sha: string, num: number) => ({ sha256: sha, role: 'page', num })
+  const shas = (files: { sha256?: unknown }[]) => files.map((f) => f.sha256)
+
+  it('moves a page and numbers the pages anew', () => {
+    const moved = movedFile([page('a', 1), page('b', 2), page('c', 3)], 'c', -1, true)
+    expect(moved.map((f) => [f.sha256, f.num])).toEqual([['a', 1], ['c', 2], ['b', 3]])
+  })
+
+  it('leaves the list as it is at the ends and for unknown files', () => {
+    const files = [page('a', 1), page('b', 2)]
+    expect(movedFile(files, 'a', -1, true)).toBe(files)
+    expect(movedFile(files, 'b', 1, true)).toBe(files)
+    expect(movedFile(files, 'x', 1, true)).toBe(files)
+  })
+
+  it('does not number what is not numbered', () => {
+    expect(movedFile([{ sha256: 'a' }, { sha256: 'b' }], 'a', 1, false).map((f) => f.num)).toEqual([undefined, undefined])
+  })
+
+  it('closes the gap of a removed page', () => {
+    expect(shas(renumbered([page('a', 1), page('c', 3)]))).toEqual(['a', 'c'])
+    expect(renumbered([page('a', 1), page('c', 3)]).map((f) => f.num)).toEqual([1, 2])
   })
 })

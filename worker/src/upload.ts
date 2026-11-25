@@ -2,7 +2,7 @@
 // the paths are ones the app would produce, finds out which files are already there, and hands out
 // signed URLs for the rest. The files themselves go from the browser straight to the bucket.
 
-import { parseFilePath } from '@contents-editor/core/paths'
+import { parseFilePath } from '@editor/core/paths'
 import { Refused, failure, json, readBody } from './common.js'
 import { presign, type S3Config } from './s3.js'
 

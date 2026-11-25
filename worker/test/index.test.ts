@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { handle } from '../src/index.js'
+import { forgetIndexes } from '../src/index-read.js'
 import { env, fakeGitHub, request, signIn } from './support.js'
 
 const fixture = (path: string) => readFileSync(new URL(`../../core/test/fixtures/examples/${path}`, import.meta.url), 'utf8')
@@ -9,6 +10,7 @@ const PLACE = 'id: feuerwehrhaus\ntype: place\nname: Feuerwehrhaus\n'
 const BRANCH = 'submission/anna/fest'
 
 async function setup(initial: Record<string, string> = { 'entities/people/erika-mustermann.yaml': PERSON, 'README.md': '# not an entry' }) {
+  forgetIndexes()
   const gh = fakeGitHub(initial)
   return { gh, cookie: await signIn(gh) }
 }
@@ -35,6 +37,18 @@ describe('the index', () => {
     const { data } = await get(gh, cookie, '/api/repo/index')
     expect(data.entries).toEqual([entry])
     expect(gh.calls.some((c) => c.url === '/graphql')).toBe(false)
+  })
+
+  it('does not download the index of CI again while it is the same blob', async () => {
+    const { gh, cookie } = await setup()
+    stored(gh, 'head-main', [{ path: 'entities/people/erika-mustermann.yaml', sha: gh.blob(PERSON), id: 'erika-mustermann', type: 'person', title: 'Aus dem Index' }])
+    const blobs = () => gh.calls.filter((c) => c.url.includes('/git/blobs/')).length
+    await get(gh, cookie, '/api/repo/index')
+    const first = blobs()
+    const { data } = await get(gh, cookie, '/api/repo/index')
+    expect(first).toBe(1)
+    expect(blobs()).toBe(first)
+    expect(data.entries[0].title).toBe('Aus dem Index')
   })
 
   it('adds what is newer than the index of CI: new, changed and removed files', async () => {

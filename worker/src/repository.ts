@@ -2,7 +2,7 @@
 // of several files at once, comments, checks, and what changed on the base branch. Everything runs with the person's own
 // token (see github.ts).
 
-import { isStoredPath, isSubmissionBranch } from '@contents-editor/core'
+import { isStoredPath, isSubmissionBranch } from '@editor/core'
 import { GitHubError, call } from './github.js'
 
 export interface RepoFile {

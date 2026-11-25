@@ -1,7 +1,7 @@
 // Everything the app asks of the server goes through this interface: the Worker (HttpApi), or, for trying things
 // out without GitHub, a copy of the examples in memory (fake.ts).
 
-import type { IndexEntry, Issue } from '@contents-editor/core'
+import type { IndexEntry, Issue } from '@editor/core'
 import { Live, liveUrl, type News } from './live.js'
 import type { FileEntry } from './prepare.js'
 import { S3Store, type UploadResult, type Variants } from './uploader.js'
@@ -22,15 +22,6 @@ export interface RemoteEntry {
   path: string
   sha: string
   text: string
-}
-
-export interface EntriesResult {
-  base: string
-  /** The branch asked for; null for the base branch. */
-  branch: string | null
-  /** True once the submission has a branch; before that, and for the base branch, the entries are the ones of the base. */
-  exists: boolean
-  entries: RemoteEntry[]
 }
 
 /** The index of the entries (one line each, see core's index-build): the base branch, or the base branch with the changes of a submission. */
@@ -106,7 +97,6 @@ export interface Api {
   /** Null if nobody is signed in. */
   me(): Promise<User | null>
   /** The entries of a submission's branch (of the base branch without one, or while the submission has no branch yet). */
-  entries(branch?: string): Promise<EntriesResult>
   /** The index of a submission (of the base branch without one, or while the submission has no branch yet). */
   index(branch?: string): Promise<IndexResult>
   /** One entry, from the submission's branch if it has the file there, else from the base branch. Null if there is none. */
@@ -187,9 +177,6 @@ export class HttpApi implements Api {
     return response.status === 401 ? null : this.json<User>(response)
   }
 
-  entries(branch?: string): Promise<EntriesResult> {
-    return this.call(`/repo/entries${branch ? `?branch=${encodeURIComponent(branch)}` : ''}`).then((r) => this.json<EntriesResult>(r))
-  }
 
   index(branch?: string): Promise<IndexResult> {
     return this.call(`/repo/index${branch ? `?branch=${encodeURIComponent(branch)}` : ''}`).then((r) => this.json<IndexResult>(r))

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MODEL, TEXT_ROLES, type TextRole } from '@contents-editor/core'
+  import { MODEL, TEXT_ROLES, type TextRole } from '@editor/core'
 
   let { value, onchange }: { value: Partial<Record<TextRole, string>>; onchange: (role: TextRole, text: string) => void } = $props()
 

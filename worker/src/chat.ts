@@ -3,7 +3,7 @@
 // answers the model's calls and sends the whole trail again, so this Worker keeps nothing between requests.
 // Everything but `handleChat` is free of the network, so it can be tested on its own.
 
-import { ENTRY_TYPES, MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
+import { ENTRY_TYPES, MODEL, TEXT_ROLES, type EntryType } from '@editor/core'
 import { MAX_BODY, json } from './common.js'
 
 export interface ChatEnv {

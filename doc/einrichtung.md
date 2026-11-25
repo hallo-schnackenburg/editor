@@ -38,7 +38,7 @@ dort; was geprüft und gebaut wird, ändert sich also an einer Stelle). Die Prü
 jeden Eintrag und die Verweise der Einträge untereinander (`npm run validate-repo -- <Ordner>` im Editor-Repo macht
 dasselbe lokal). Bei jedem Push auf `main` baut sie zusätzlich den Index (siehe unten).
 
-Der Job der Vorlage heißt `validate`, die Prüfungen daher `validate / validate` und `validate / index`.
+Der Job der Vorlage heißt `validate`, die Prüfungen daher `validate / validate / validate` und `validate / validate / index`.
 
 In der Vorlage und im Workflow steht `hallo-schnackenburg/editor` als Repo des Editors; anpassen, falls es anders heißt.
 Ist das Editor-Repo privat, muss es unter Settings → Actions → General → Access Zugriff aus anderen Repos erlauben.
@@ -48,7 +48,7 @@ Ist das Editor-Repo privat, muss es unter Settings → Actions → General → A
 Repository → Settings → Rules → Rulesets (oder Branches → Branch protection rule) für `main`:
 
 - *Require a pull request before merging* (keine Freigaben nötig, es gibt keine Rollen)
-- *Require status checks to pass*: `validate / validate`
+- *Require status checks to pass*: `validate / validate / validate`
 - *Block force pushes*
 
 Damit kann niemand am Editor vorbei Ungültiges nach `main` bringen, und „Übernehmen“ klappt erst, wenn die Prüfung

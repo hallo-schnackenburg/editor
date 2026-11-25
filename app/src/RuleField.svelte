@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { occurrences, ruleProblem } from '@contents-editor/core'
+  import { occurrences, ruleProblem } from '@editor/core'
   import { issueText } from './logic.js'
   import { ruleText } from './ruletext.js'
 

@@ -3,10 +3,10 @@
 // a pull request, saving checks what it saves, a draft is submitted, accepted (squashed into main) or closed.
 // Somebody else (bernd) has a submission waiting, so there is something to look at in the list of submissions.
 
-import { FOLDER_PATH, authorOf, indexEntry, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@contents-editor/core'
+import { FOLDER_PATH, authorOf, indexEntry, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@editor/core'
 import type { FileEntry } from './prepare.js'
 import { FakeStore, type UploadResult, type Variants } from './uploader.js'
-import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type IndexResult, type RemoteEntry, type Listener, type News, type User } from './api.js'
+import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type IndexResult, type RemoteEntry, type Listener, type News, type User } from './api.js'
 
 const SEED = import.meta.glob('../../core/test/fixtures/examples/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -62,12 +62,6 @@ export class FakeApi implements Api {
 
   async me(): Promise<User> {
     return { login: 'anna', name: 'Anna Beispiel', avatar: '', role: 'write' }
-  }
-
-  async entries(branch?: string): Promise<EntriesResult> {
-    const own = branch ? this.branches.get(branch) : undefined
-    const files = own ?? this.main
-    return { base: 'main', branch: branch ?? null, exists: !!own, entries: [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, text]) => ({ path, text, sha: sha(text) })) }
   }
 
   async index(branch?: string): Promise<IndexResult> {

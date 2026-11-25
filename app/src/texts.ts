@@ -8,6 +8,8 @@ export interface TextStore {
   /** The texts of those of the versions that are kept. */
   get(shas: string[]): Promise<Map<string, string>>
   put(items: { sha: string; text: string }[]): Promise<void>
+  /** Forgets these versions. */
+  remove(shas: string[]): Promise<void>
   clear(): Promise<void>
 }
 
@@ -26,12 +28,16 @@ export class MemoryTextStore implements TextStore {
     for (const { sha, text } of items) this.#texts.set(sha, text)
   }
 
+  async remove(shas: string[]): Promise<void> {
+    for (const sha of shas) this.#texts.delete(sha)
+  }
+
   async clear(): Promise<void> {
     this.#texts.clear()
   }
 }
 
-const DB = 'contents-editor-texts'
+const DB = 'editor-texts'
 const STORE = 'texts'
 
 /** The texts in the browser's IndexedDB, one record for each version. */
@@ -71,6 +77,10 @@ export class BrowserTextStore implements TextStore {
 
   async put(items: { sha: string; text: string }[]): Promise<void> {
     if (items.length > 0) await this.#run('readwrite', (s) => items.map(({ sha, text }) => s.put(text, sha)))
+  }
+
+  async remove(shas: string[]): Promise<void> {
+    if (shas.length > 0) await this.#run('readwrite', (s) => shas.map((sha) => s.delete(sha)))
   }
 
   async clear(): Promise<void> {

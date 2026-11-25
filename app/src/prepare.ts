@@ -2,7 +2,7 @@
 // the SHA-256 (the file's identity), size, image dimensions and a small preview.
 // Nothing is uploaded here.
 
-import { blobChunks, hashBlob, hashChunks, originalPath, variantPath } from '@contents-editor/core'
+import { blobChunks, hashBlob, hashChunks, originalPath, variantPath } from '@editor/core'
 
 /** An entry of `files` in the YAML of an object. */
 export type FileEntry = Record<string, unknown>

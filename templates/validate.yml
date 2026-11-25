@@ -1,5 +1,5 @@
 # The automatic check of a data repository: copy to .github/workflows/validate.yml in each data repository (contents, contents-staging,
-# contents-dev, the archive repositories) and make the check `validate / validate` required for the base branch (doc/einrichtung.md).
+# contents-dev, the archive repositories) and make the check `validate / validate / validate` required for the base branch (doc/einrichtung.md).
 #
 # What is checked and built lives in the editor's repository (.github/workflows/validate.yml), it is used from there at every run:
 # a change to it needs no change in the data repositories. The job is called `validate` on purpose (it names the checks).

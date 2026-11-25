@@ -2,7 +2,7 @@
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
 import type { FileEntry } from './prepare.js'
-import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@contents-editor/core'
+import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -207,6 +207,19 @@ export function withFile(existing: FileEntry[], file: FileEntry, kind: string, e
   if (!external && rule.max !== undefined && existing.length >= rule.max) return { problem: `Hier sind höchstens ${rule.max} Dateien vorgesehen.` }
   if (rule.numbered && !external) entry.num = Math.max(0, ...existing.map((f) => (typeof f.num === 'number' ? f.num : 0))) + 1
   return { files: [...existing, entry] }
+}
+
+/** The files with the numbers (of the pages) following the order of the list again: after a file moved or was removed. */
+export const renumbered = (files: FileEntry[]): FileEntry[] => files.map((file, i) => ({ ...file, num: i + 1 }))
+
+/** The list with the file `by` places further (negative: earlier); the same list when it cannot move. Numbered files get their numbers anew. */
+export function movedFile(files: FileEntry[], sha: string, by: number, numbered: boolean): FileEntry[] {
+  const from = files.findIndex((f) => f.sha256 === sha)
+  const to = from + by
+  if (from < 0 || to < 0 || to >= files.length) return files
+  const next = [...files]
+  next.splice(to, 0, ...next.splice(from, 1))
+  return numbered ? renumbered(next) : next
 }
 
 export const setRole = (entry: Entry, role: string, value: string): string => setText(entry.text, role, value)

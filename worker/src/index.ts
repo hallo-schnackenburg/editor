@@ -2,7 +2,7 @@
 //   /auth/*       sign in with GitHub, who am I, sign out (auth.ts). Open to everyone.
 //   POST /hook/github  GitHub tells that something changed; passed on to everybody who has the app open (webhook.ts).
 // and only for a signed-in person who may write to the data repository:
-//   /repo/entries, /repo/entry   read the entries, save and remove one (repo.ts).
+//   /repo/index, /repo/read, /repo/entry   read the entries, save and remove one (repo.ts).
 //   /repo/submissions/*              the submissions (pull requests): list, look at, submit, accept, close, comments (submissions.ts).
 //   POST /upload                 which files are not in the bucket yet, with signed URLs to put them there (upload.ts); the files go from the browser straight to the bucket.
 //   POST /chat                   passes a chat message to the model and returns tool calls; the Anthropic key stays here (chat.ts).

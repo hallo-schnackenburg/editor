@@ -311,7 +311,7 @@ describe('what the Worker looks up itself', () => {
       const url = String(input)
       if (url.startsWith('https://nominatim.openstreetmap.org/')) {
         places_.push(url)
-        expect((init.headers as Record<string, string>)['user-agent']).toContain('contents-editor')
+        expect((init.headers as Record<string, string>)['user-agent']).toContain('editor')
         return places()
       }
       if (url.startsWith('https://api.anthropic.com/')) {

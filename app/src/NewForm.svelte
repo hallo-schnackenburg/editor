@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { MODEL, type EntryType } from '@contents-editor/core'
+  import { MODEL, type EntryType } from '@editor/core'
   import { idOf, newEntry, setValue, titleOf, typeOf, type NewContext } from './logic.js'
   import LinksField from './LinksField.svelte'
   import type { Workspace } from './workspace.svelte.js'

@@ -2,7 +2,7 @@
 // a submission does, talk about it, submit it, accept it (merge) or close it. Everybody in the team may; there are no roles.
 // The state is GitHub's; this only reads it and asks for the actions.
 
-import { validateEntryYaml, type Issue } from '@contents-editor/core'
+import { validateEntryYaml, type Issue } from '@editor/core'
 import { ApiError, SignedOut, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type Comment, type News } from './api.js'
 
 export type Action = 'submit' | 'merge' | 'close'

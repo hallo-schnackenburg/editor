@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MODEL, type EntryType } from '@contents-editor/core'
+  import { MODEL, type EntryType } from '@editor/core'
   import { idOf, titleOf, typeOf, type Entry } from './logic.js'
 
   let { value, targets, max, entries, exclude = [], onchange }: { value: string[]; targets: readonly string[]; max?: number; entries: Entry[]; exclude?: readonly string[]; onchange: (ids: string[]) => void } = $props()

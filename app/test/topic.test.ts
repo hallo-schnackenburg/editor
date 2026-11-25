@@ -56,7 +56,7 @@ describe('making a topic', () => {
     const theirs = ws.submissions.find((s) => s.author !== ws.user!.login)!
     await ws.switchTo(theirs.branch)
     await ws.createTopic('Kunst')
-    expect((await api.entries(theirs.branch)).entries.map((e) => e.path)).toContain('contents/kunst/.folder.yaml')
+    expect((await api.index(theirs.branch)).entries.map((e) => e.path)).toContain('contents/kunst/.folder.yaml')
     expect(ws.branch).toBe(theirs.branch)
   })
 })

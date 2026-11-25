@@ -1,6 +1,6 @@
 // What a change does to an entry, in a form to read: field by field (what an editor wants to see), or line by line (the YAML).
 
-import { MODEL, readObject, type EntryType } from '@contents-editor/core'
+import { MODEL, readObject, type EntryType } from '@editor/core'
 
 export interface FieldChange {
   /** The field as it is written in the entry ("text.teaser" for a role of the text). */

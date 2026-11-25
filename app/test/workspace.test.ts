@@ -137,15 +137,15 @@ describe('the draft', () => {
     expect(await ws.finish()).toBe(true)
     expect(ws.draft).toMatchObject({ name: defaultName(), author: 'anna', state: 'draft' })
     const branch = ws.draft!.branch
-    expect((await api.entries(branch)).entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
+    expect((await api.index(branch)).entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
     // the base has nothing of it
-    expect((await api.entries()).entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
+    expect((await api.index()).entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
     await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# x\n')
     expect(ws.changes.map((c) => c.kind)).toEqual(['new'])
     expect(await ws.finish()).toBe(true)
     expect(ws.submissions.filter((c) => c.author === 'anna')).toHaveLength(1)
-    expect((await api.entries(branch)).entries.find((e) => e.path === ERIKA)!.text).toContain('# x')
+    expect((await api.read([ERIKA], branch))[0].text).toContain('# x')
     expect(ws.changes.map((c) => c.kind)).toEqual(['new', 'changed'])
   })
 
@@ -246,7 +246,7 @@ describe('switching to another submission', () => {
     ws.edit(ws.selected!.text + '# fixed\n')
     expect(await ws.finish()).toBe(true)
     // It went to bernd's branch, and the submission is still his.
-    expect((await api.entries(BERND)).entries.find((e) => e.path === ERIKA)!.text).toContain('# fixed')
+    expect((await api.read([ERIKA], BERND))[0].text).toContain('# fixed')
     expect(ws.active).toMatchObject({ branch: BERND, author: 'bernd' })
     expect(ws.submissions.filter((c) => c.author === 'anna')).toEqual([])
   })
@@ -284,7 +284,7 @@ describe('switching to another submission', () => {
     await ws.answerSwitch('save')
     expect(ws.branch).toBe(BERND)
     const mine = ws.submissions.find((c) => c.author === 'anna')!
-    expect((await api.entries(mine.branch)).entries.find((e) => e.path === ERIKA)!.text).toContain('# kept')
+    expect((await api.read([ERIKA], mine.branch))[0].text).toContain('# kept')
     expect(ws.dirty).toHaveLength(0)
   })
 
@@ -406,11 +406,11 @@ describe('saving in the background', () => {
     expect(ws.dirty).toEqual([])
     expect(ws.changes).toHaveLength(1)
     expect(ws.saving).toBe(true)
-    expect((await api.entries(ws.branch)).entries.find((e) => e.path === ERIKA)!.text).not.toContain('# note')
+    expect((await api.read([ERIKA], ws.branch))[0].text).not.toContain('# note')
     api.release.shift()!()
     expect(await ws.sync()).toBe(true) // waits for what is on its way
     expect(ws.saving).toBe(false)
-    expect((await api.entries(ws.branch)).entries.find((e) => e.path === ERIKA)!.text).toContain('# note')
+    expect((await api.read([ERIKA], ws.branch))[0].text).toContain('# note')
   })
 
   it('takes it back when the commit fails: the entry is unsaved again, and the error is shown', async () => {
@@ -551,6 +551,28 @@ describe('the copy of all texts on this computer', () => {
     await ws.select(ERIKA)
     expect(api.requests).toBe(0)
     expect(ws.selected?.text).toContain('Erika Mustermann')
+  })
+
+  it('forgets the versions nobody knows any more, once there are many', async () => {
+    const texts = new MemoryTextStore()
+    await texts.put([{ sha: 'old-1', text: 'a' }, { sha: 'old-2', text: 'b' }, { sha: 'old-3', text: 'c' }])
+    const few = new Workspace(new FakeApi(), undefined, undefined, texts)
+    few.bundleFrom = 0
+    few.forgetFrom = 4
+    await few.start()
+    few.stopLive()
+    await settle()
+    expect((await texts.keys()).has('old-1')).toBe(true) // three are not many
+
+    const many = new Workspace(new FakeApi(), undefined, undefined, texts)
+    many.bundleFrom = 0
+    many.forgetFrom = 3
+    await many.start()
+    many.stopLive()
+    await settle()
+    const keys = await texts.keys()
+    expect(['old-1', 'old-2', 'old-3'].some((k) => keys.has(k))).toBe(false)
+    expect(keys.size).toBe(many.entries.length)
   })
 
   it('reads in blocks when there is no bundle', async () => {

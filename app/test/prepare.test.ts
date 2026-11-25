@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { checkFiles } from '@contents-editor/core'
+import { checkFiles } from '@editor/core'
 import { prepareFile } from '../src/prepare.js'
 
 describe('prepareFile', () => {

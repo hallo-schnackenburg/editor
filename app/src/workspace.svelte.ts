@@ -5,7 +5,7 @@
 // what the active branch differs from the base branch in. Another submission is chosen with `switchTo`, which asks about what is not
 // saved. The screens only show all this and call these methods.
 
-import { FOLDER_PATH, MODEL, mergeObject, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, MODEL, mergeObject, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@editor/core'
 import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 
 /** How many times the assistant may look things up for one message. */
@@ -171,6 +171,8 @@ export class Workspace implements Host {
   mirror = true
   /** From this many missing texts on, the bundle is downloaded instead of reading them in blocks. */
   bundleFrom = 300
+  /** From this many versions on that neither the base branch nor the branch in use knows, the store is cleared of them (and of no fewer than the ones it needs). */
+  forgetFrom = 1000
   /** Counts the runs of the background copy: a new start or a sign-out ends the old one. */
   #mirrorRun = 0
   #saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -601,9 +603,17 @@ export class Workspace implements Host {
     try {
       const have = await this.#texts.keys()
       const missing = new Map<string, { path: string; branch: string | undefined }>()
+      const live = new Set<string>()
       for (const [i, group] of [this.#known.base?.entries ?? [], this.branch ? (this.#known.recall(this.branch)?.entries ?? []) : []].entries()) {
-        for (const l of group) if (l.type !== 'folder' && !have.has(l.sha) && !missing.has(l.sha)) missing.set(l.sha, { path: l.path, branch: i === 0 ? undefined : this.branch })
+        for (const l of group) {
+          if (l.type === 'folder') continue
+          live.add(l.sha)
+          if (!have.has(l.sha) && !missing.has(l.sha)) missing.set(l.sha, { path: l.path, branch: i === 0 ? undefined : this.branch })
+        }
       }
+      // Old versions pile up with every change of the repository: they are dropped once there are many (they could be read again).
+      const stale = live.size > 0 ? [...have].filter((sha) => !live.has(sha)) : []
+      if (stale.length >= this.forgetFrom && alive()) await this.#texts.remove(stale)
       if (missing.size === 0 || !alive()) return
       if (missing.size > this.bundleFrom) await this.#fromBundle(missing, alive)
       const rest = [...missing.values()]

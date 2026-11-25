@@ -4,7 +4,7 @@
 // WorkerAgent asks the model behind the Worker; FakeAgent stands in for the demo and the tests and returns the same kind of
 // calls, so everything behind it is real.
 
-import { readValue, type EntryType } from '@contents-editor/core'
+import { readValue, type EntryType } from '@editor/core'
 
 /** An entity as the assistant gets to know it, so that it can set references without looking anything up. */
 export interface IndexEntry {

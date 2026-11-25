@@ -50,7 +50,7 @@ describe('sign-in', () => {
   it('has nobody signed in without the cookie, and ends the session on request', async () => {
     const gh = fakeGitHub()
     expect((await handle(request(undefined, '/api/auth/me'), env, gh.fn)).status).toBe(401)
-    expect((await handle(request(undefined, '/api/repo/entries'), env, gh.fn)).status).toBe(401)
+    expect((await handle(request(undefined, '/api/repo/index'), env, gh.fn)).status).toBe(401)
     const out = await handle(request(await signIn(gh), '/api/auth/logout', { method: 'POST' }), env, gh.fn)
     expect(out.headers.getSetCookie().find((c) => c.startsWith('contents_editor_session='))).toContain('Max-Age=0')
   })

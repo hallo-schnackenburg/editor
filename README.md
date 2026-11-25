@@ -1,1 +1,1 @@
-# contents-editor
+# editor

@@ -2,7 +2,7 @@
 // than it is added here, so the answer is never behind the base branch. A submission is the index of the base branch plus what its
 // branch changes. Without an index (CI has not run yet) or with too many changes, everything is read and indexed once.
 
-import { buildIndex, indexEntry, isStoredPath, type IndexEntry, type RepoIndex } from '@contents-editor/core'
+import { buildIndex, indexEntry, isStoredPath, type IndexEntry, type RepoIndex } from '@editor/core'
 import { Refused, headOf, readBlobs, readEntries } from './common.js'
 import { call, raw } from './github.js'
 import { Repo, type ChangedFile } from './repository.js'
@@ -34,17 +34,27 @@ export async function readBundle(token: string, repo: string, fetchFn: typeof fe
   return new Response(upstream.body, { headers: { 'content-type': 'application/gzip', 'cache-control': 'private, no-store' } })
 }
 
+/** The last index read per repository, by the sha of its blob (which names its content, so it is never stale): the download and parse are saved while CI has not made a new one. The access was checked by the request for the sha. */
+const parsed = new Map<string, { sha: string; index: RepoIndex }>()
+
+/** For tests: the fake GitHub names blobs by length, not by content. */
+export const forgetIndexes = () => parsed.clear()
+
 /** The index CI made, or null if there is none (yet) or it is not one we can read. */
 async function storedIndex(token: string, repo: string, fetchFn: typeof fetch): Promise<RepoIndex | null> {
   const sha = await indexFile(token, repo, INDEX_FILE, fetchFn)
   if (!sha) return null
+  const known = parsed.get(repo)
+  if (known?.sha === sha) return known.index
   // The blob API (not the contents API) because the index may be larger than the contents API delivers.
   const blob = await call<{ content: string; encoding: string }>(fetchFn, token, 'GET', `/repos/${repo}/git/blobs/${sha}`)
   if (blob.encoding !== 'base64') return null
   try {
     const text = new TextDecoder().decode(Uint8Array.from(atob(blob.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)))
     const data = JSON.parse(text) as Partial<RepoIndex>
-    return data.version === 1 && typeof data.commit === 'string' && Array.isArray(data.entries) ? (data as RepoIndex) : null
+    if (data.version !== 1 || typeof data.commit !== 'string' || !Array.isArray(data.entries)) return null
+    parsed.set(repo, { sha, index: data as RepoIndex })
+    return data as RepoIndex
   } catch {
     return null
   }

@@ -4,7 +4,7 @@
 // prepared: the chat shows a question with a button, and the action is done when the person presses it, not by the assistant.
 // The rights and rules are those of the screens: what a button there does not allow, the assistant cannot do.
 
-import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@contents-editor/core'
+import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
 import { idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'

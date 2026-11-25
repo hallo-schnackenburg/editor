@@ -1,5 +1,5 @@
 {
-  "name": "@contents-editor/worker",
+  "name": "@editor/worker",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@contents-editor/core": "*"
+    "@editor/core": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

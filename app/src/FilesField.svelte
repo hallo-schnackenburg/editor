@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { MODEL } from '@contents-editor/core'
+  import { MODEL } from '@editor/core'
   import type { Api } from './api.js'
   import { prepareFile, type FileEntry } from './prepare.js'
   import Lightbox from './Lightbox.svelte'
-  import { withFile } from './logic.js'
+  import { movedFile, renumbered, withFile } from './logic.js'
   import { bucketPreview, type Viewable } from './viewer.js'
 
   type Rule = { roles?: readonly string[]; numbered?: boolean; max?: number }
@@ -68,7 +68,12 @@
     for (const file of files) void add(file)
   }
 
-  const remove = (sha: string) => put(current.filter((f) => f.sha256 !== sha))
+  const numbered = $derived(!external && !!rule.numbered)
+  const remove = (sha: string) => {
+    const left = current.filter((f) => f.sha256 !== sha)
+    put(numbered ? renumbered(left) : left)
+  }
+  const move = (sha: string, by: number) => put(movedFile(current, sha, by, numbered))
   const pictureOf = (file: FileEntry) => local.get(file.sha256 as string)?.url ?? (base ? bucketPreview(file, base) : undefined)
   // What the big view shows: the files that have a picture; a picture made here is shown until the bucket has its own.
   const tiles = $derived(
@@ -86,7 +91,7 @@
 </script>
 
 <ul class="files">
-  {#each value as file (file.sha256)}
+  {#each value as file, at (file.sha256)}
     <li>
       {#if pictureOf(file)}<button type="button" class="zoom" onclick={() => look(file)} aria-label="Vergrößern"><img src={pictureOf(file)} alt="" /></button>{:else}<span class="blank mono">{String(file.mime ?? '').split('/')[1] ?? ''}</span>{/if}
       <span class="what">
@@ -94,6 +99,10 @@
         <span class="muted">{file.original_name ?? ''} · {sizeOf(file.bytes)}</span>
       </span>
       {#if base && typeof file.path === 'string'}<a href={`${base.replace(/\/$/, '')}/${file.path}`} target="_blank" rel="noreferrer">Öffnen</a>{/if}
+      {#if numbered && value.length > 1}
+        <button type="button" onclick={() => move(file.sha256 as string, -1)} disabled={at === 0} aria-label="Nach oben">↑</button>
+        <button type="button" onclick={() => move(file.sha256 as string, 1)} disabled={at === value.length - 1} aria-label="Nach unten">↓</button>
+      {/if}
       <button type="button" onclick={() => remove(file.sha256 as string)}>Entfernen</button>
     </li>
   {/each}

@@ -15,20 +15,20 @@ const BRANCH = 'submission/anna/fest'
 /** A save of a submission called "Fest"; `data` adds to or replaces what is sent. */
 const put = (cookie: string, data: Record<string, unknown>, headers: Record<string, string> = {}) => request(cookie, '/api/repo/entry', { method: 'PUT', body: JSON.stringify({ branch: BRANCH, name: 'Fest', ...data }), headers })
 
-describe('reading the entries', () => {
+describe('the entries (as the index lists them)', () => {
   it('lists the entries of the base branch, and only entries', async () => {
     const { gh, cookie } = await setup()
-    const response = await handle(request(cookie, '/api/repo/entries'), env, gh.fn)
+    const response = await handle(request(cookie, '/api/repo/index'), env, gh.fn)
     const data = await response.json() as any
     expect(response.status).toBe(200)
     expect(data).toMatchObject({ base: 'main', branch: null, exists: false })
-    expect(data.entries).toEqual([{ path: 'entities/people/erika-mustermann.yaml', sha: gh.blob(PERSON), text: PERSON }])
+    expect(data.entries).toEqual([{ path: 'entities/people/erika-mustermann.yaml', sha: gh.blob(PERSON), id: 'erika-mustermann', type: 'person', title: expect.any(String) }])
   })
 
   it('delivers the .folder.yaml of a topic folder too, and a commit may write it (checked), but not the single-entry route', async () => {
     const folder = 'title: Kunst\n'
     const { gh, cookie } = await setup({ 'entities/people/erika-mustermann.yaml': PERSON, 'contents/kunst/.folder.yaml': folder })
-    const data = await (await handle(request(cookie, '/api/repo/entries'), env, gh.fn)).json() as any
+    const data = await (await handle(request(cookie, '/api/repo/index'), env, gh.fn)).json() as any
     expect(data.entries.map((e: { path: string }) => e.path)).toEqual(['contents/kunst/.folder.yaml', 'entities/people/erika-mustermann.yaml'])
     const refused = await handle(put(cookie, { path: 'contents/kunst/.folder.yaml', text: folder }), env, gh.fn)
     expect(refused.status).toBe(400)
@@ -45,21 +45,21 @@ describe('reading the entries', () => {
 
   it('asks GitHub for the texts with variables, not by putting paths into the query', async () => {
     const { gh, cookie } = await setup()
-    await handle(request(cookie, '/api/repo/entries'), env, gh.fn)
+    await handle(request(cookie, '/api/repo/index'), env, gh.fn)
     const query = gh.calls.find((c) => c.url === '/graphql')!.body
     expect(query.query).not.toContain('erika')
-    expect(query.variables.e0).toBe('main:entities/people/erika-mustermann.yaml')
+    expect(query.variables.e0).toBe('head-main:entities/people/erika-mustermann.yaml')
   })
 })
 
 describe('reading a submission', () => {
   it('reads the base branch while the submission has no branch, and the branch once it has', async () => {
     const { gh, cookie } = await setup()
-    const before = await (await handle(request(cookie, `/api/repo/entries?branch=${BRANCH}`), env, gh.fn)).json() as any
+    const before = await (await handle(request(cookie, `/api/repo/index?branch=${BRANCH}`), env, gh.fn)).json() as any
     expect(before).toMatchObject({ branch: BRANCH, exists: false })
     expect(before.entries).toHaveLength(1)
     await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: 'id: feuerwehrhaus\ntype: place\nname: Feuerwehrhaus\n' }), env, gh.fn)
-    const after = await (await handle(request(cookie, `/api/repo/entries?branch=${BRANCH}`), env, gh.fn)).json() as any
+    const after = await (await handle(request(cookie, `/api/repo/index?branch=${BRANCH}`), env, gh.fn)).json() as any
     expect(after.exists).toBe(true)
     expect(after.entries.map((e: any) => e.path)).toEqual(['entities/people/erika-mustermann.yaml', 'entities/places/feuerwehrhaus.yaml'])
   })
@@ -67,7 +67,7 @@ describe('reading a submission', () => {
   it('takes only the branch of a submission', async () => {
     const { gh, cookie } = await setup()
     for (const branch of ['main', 'edit/anna', 'submission/anna', 'submission/anna/A b']) {
-      const response = await handle(request(cookie, `/api/repo/entries?branch=${encodeURIComponent(branch)}`), env, gh.fn)
+      const response = await handle(request(cookie, `/api/repo/index?branch=${encodeURIComponent(branch)}`), env, gh.fn)
       expect(response.status, branch).toBe(400)
     }
   })

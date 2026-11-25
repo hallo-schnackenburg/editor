@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
+  import { MODEL, TEXT_ROLES, type EntryType } from '@editor/core'
   import { idOf, nextDates, refsIn, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext } from './logic.js'
   import { ruleText } from './ruletext.js'
   import Chat from './Chat.svelte'

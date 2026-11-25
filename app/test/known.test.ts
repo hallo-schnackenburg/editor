@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { EntriesResult } from '../src/api.js'
+import type { RemoteEntry } from '../src/api.js'
 import { FakeApi } from '../src/fake.js'
-import { Known, MemoryStore, applyDelta, deltaOf } from '../src/known.js'
+import { Known, MemoryStore, type Listed, applyDelta, deltaOf } from '../src/known.js'
 import { Workspace } from '../src/workspace.svelte.js'
 
 const BERND = 'submission/bernd/feuerwehr-texte'
 const FEUERWEHR = 'entities/organizations/feuerwehr-schnackenburg.yaml'
 
-const result = (files: Record<string, string>, branch: string | null = null): EntriesResult => ({
+const result = (files: Record<string, string>, branch: string | null = null): Listed<RemoteEntry> => ({
   base: 'main',
   branch,
   exists: true,
@@ -105,7 +105,7 @@ describe('nothing to wait for', () => {
     const ws = await started(api)
     await warmed(api)
     // Somebody else saved on bernd's branch.
-    await api.commit([{ path: FEUERWEHR, text: (await api.entries(BERND)).entries.find((e) => e.path === FEUERWEHR)!.text + '# more\n' }], [], { branch: BERND, name: 'x' })
+    await api.commit([{ path: FEUERWEHR, text: (await api.read([FEUERWEHR], BERND))[0].text + '# more\n' }], [], { branch: BERND, name: 'x' })
     await ws.loadSubmissions()
     api.asked = []
     await ws.switchTo(BERND)

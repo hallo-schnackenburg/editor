@@ -27,10 +27,10 @@ jobs:
         with:
           node-version: 22
       - name: Install the check
-        run: npm install --workspace @contents-editor/core --include-workspace-root
+        run: npm install --workspace @editor/core --include-workspace-root
         working-directory: .editor
       - name: Check the entries
-        run: npm run validate-repo --workspace @contents-editor/core -- "$GITHUB_WORKSPACE"
+        run: npm run validate-repo --workspace @editor/core -- "$GITHUB_WORKSPACE"
         working-directory: .editor
 
   # The index of the entries (a line per file, core/src/index-build.ts) and a bundle of all their texts: the editor loads the index instead of every file, and the bundle once. It is made
@@ -55,12 +55,12 @@ jobs:
         with:
           node-version: 22
       - name: Install the tool
-        run: npm install --workspace @contents-editor/core --include-workspace-root
+        run: npm install --workspace @editor/core --include-workspace-root
         working-directory: .editor
       - name: Build the index
         run: |
           mkdir "$RUNNER_TEMP/index"
-          npm run build-index --workspace @contents-editor/core -- "$GITHUB_WORKSPACE" "$GITHUB_SHA" "$RUNNER_TEMP/index"
+          npm run build-index --workspace @editor/core -- "$GITHUB_WORKSPACE" "$GITHUB_SHA" "$RUNNER_TEMP/index"
         working-directory: .editor
       - name: Publish the index
         working-directory: ${{ runner.temp }}/index

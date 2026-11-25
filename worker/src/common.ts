@@ -1,6 +1,6 @@
 // What the routes of the data repository share: the answers, the refusals, reading a branch.
 
-import { ENTRY_PATH, isStoredPath, type Issue } from '@contents-editor/core'
+import { ENTRY_PATH, isStoredPath, type Issue } from '@editor/core'
 import { GitHubError, call } from './github.js'
 
 export { ENTRY_PATH }

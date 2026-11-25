@@ -2,7 +2,7 @@
 // submission only how it differs from the base (a branch is the whole database again, with a few changes). A branch is right as long
 // as its head (the newest commit) is the one it was read at. Kept in the browser too, so that it is there after the page was loaded again.
 
-import type { IndexEntry } from '@contents-editor/core'
+import type { IndexEntry } from '@editor/core'
 import type { Comment, Submission, User } from './api.js'
 
 /** What is kept of an entry: where it is and the version it is at (the sha of its file). */
@@ -173,7 +173,7 @@ export class MemoryStore implements Store {
   }
 }
 
-const DB = 'contents-editor'
+const DB = 'editor'
 const KEY = 'snapshot'
 
 /** The snapshot in the browser's IndexedDB (as one piece of text; what is $state in the app cannot be cloned). */
