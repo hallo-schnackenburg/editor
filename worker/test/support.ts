@@ -77,6 +77,11 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
       }
       return json({ ref: m[1] })
     }
+    m = path.match(/^\/repos\/o\/r\/git\/blobs\/(.+)$/)
+    if (m) {
+      for (const t of branches.values()) for (const text of t.values()) if (blob(text) === m[1]) return json({ encoding: 'base64', content: btoa(String.fromCharCode(...new TextEncoder().encode(text))) })
+      return json({ message: 'Not Found' }, 404)
+    }
     m = path.match(/^\/repos\/o\/r\/git\/trees\/(.+)$/)
     if (m) {
       const files = [...(tree(m[1]) ?? new Map()).entries()].map(([p, t]) => ({ path: p, type: 'blob', sha: blob(t) }))
@@ -166,7 +171,7 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
       const to = tree(m[2]) ?? new Map<string, string>()
       const paths = [...new Set([...from.keys(), ...to.keys()])]
       const changed = paths.flatMap((p) => (from.get(p) === to.get(p) ? [] : [{ filename: p, status: !from.has(p) ? 'added' : !to.has(p) ? 'removed' : 'modified' }]))
-      return json({ merge_base_commit: { sha: m[1] }, files: changed })
+      return json({ status: 'ahead', merge_base_commit: { sha: m[1] }, files: changed })
     }
     m = path.match(/^\/repos\/o\/r\/commits\/(.+)\/check-runs$/)
     if (m) {

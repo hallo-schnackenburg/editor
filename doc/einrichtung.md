@@ -36,7 +36,7 @@ Ohne Webhook funktioniert alles, die Oberfläche fragt dann nur einmal pro Minut
 `contents-dev`. Die Prüfung heißt `validate` und läuft bei jedem Pull Request. Sie prüft jeden Eintrag und die
 Verweise der Einträge untereinander (`npm run validate-repo -- <Ordner>` im Editor-Repo macht dasselbe lokal).
 
-In der Vorlage steht `hallo-schnackenburg/contents-editor` als Repo des Editors; anpassen, falls es anders heißt.
+In der Vorlage steht `hallo-schnackenburg/editor` als Repo des Editors; anpassen, falls es anders heißt.
 
 ## 3. `main` schützen
 
@@ -76,3 +76,7 @@ npm run dev:fake     # ohne GitHub: Beispieldaten im Speicher, bernd hat eine ei
 ```
 
 Der alte Branch `edit/<login>` aus der ersten Version wird nicht mehr benutzt und kann gelöscht werden.
+
+## Index
+
+Die Vorlage hat einen zweiten Job `index`. Er läuft nach jedem Push auf `main`, nachdem `validate` grün war, baut aus den Einträgen eine `index.json` (eine Zeile pro Datei) und legt sie als einzigen Commit auf den Branch `index` des Datenrepos (wird jedes Mal ersetzt). Der Job braucht nur das mitgelieferte Token (`contents: write`). Ist `main` durch Branch-Schutz gesperrt, gilt das nicht für den Branch `index`; ein Schutz darauf wäre zu lassen.

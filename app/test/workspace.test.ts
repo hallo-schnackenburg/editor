@@ -14,8 +14,8 @@ async function started(api: Api = new FakeApi()) {
   return ws
 }
 /** Makes a change to Erika and a new place, so that there is something to make a submission of. */
-function someChanges(ws: Workspace) {
-  ws.select(ERIKA)
+async function someChanges(ws: Workspace) {
+  await ws.select(ERIKA)
   ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
   ws.create('place', 'Alte Fähre')
 }
@@ -45,10 +45,10 @@ describe('the changes', () => {
   it('are the difference to the base: what was made, changed and deleted; the server gets to know when the entry is finished', async () => {
     const api = new FakeApi()
     const ws = await started(api)
-    someChanges(ws)
+    await someChanges(ws)
     expect(ws.changes).toEqual([]) // typed, not finished: no change, nothing at the server
     expect((await api.submissions()).length).toBe(1)
-    ws.select('entities/events/osterfeuer.yaml')
+    await ws.select('entities/events/osterfeuer.yaml')
     expect(await ws.remove()).toBe(true) // deleting saves, with everything that is waiting
     expect(ws.changes.map((e) => [e.kind, e.entry.path])).toEqual([
       ['new', 'entities/places/alte-faehre.yaml'],
@@ -65,8 +65,8 @@ describe('the changes', () => {
 
   it('can be taken back one by one (each is saved): a new entry disappears, a changed one is as the base has it, a deleted one is back', async () => {
     const ws = await started()
-    someChanges(ws)
-    ws.select('entities/events/osterfeuer.yaml')
+    await someChanges(ws)
+    await ws.select('entities/events/osterfeuer.yaml')
     await ws.remove()
     await ws.discard('entities/places/alte-faehre.yaml')
     await ws.discard(ERIKA)
@@ -80,7 +80,7 @@ describe('the changes', () => {
 
   it('are made for the open entry again and again: revert takes back what was typed and not saved', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# x\n')
     expect(ws.dirty).toHaveLength(1)
     ws.revert()
@@ -93,7 +93,7 @@ describe('the changes', () => {
 
   it('say what is wrong while it is wrong', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit('id: erika-mustermann\ntype: person\n')
     expect(ws.issues.map((i) => i.message)).toEqual(['missing field "name"'])
     expect([...ws.problems.keys()]).toEqual([]) // only what is saved in the draft counts as unfinished
@@ -118,7 +118,7 @@ describe('the changes', () => {
 
   it('stay when the entries are loaded again (what is typed is not lost to news)', async () => {
     const ws = await started()
-    someChanges(ws)
+    await someChanges(ws)
     await ws.load()
     expect(ws.dirty.map((e) => e.path).sort()).toEqual([ERIKA, 'entities/places/alte-faehre.yaml'])
     expect(ws.changes).toEqual([])
@@ -137,7 +137,7 @@ describe('the draft', () => {
     expect((await api.entries(branch)).entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
     // the base has nothing of it
     expect((await api.entries()).entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# x\n')
     expect(ws.changes.map((c) => c.kind)).toEqual(['new'])
     expect(await ws.finish()).toBe(true)
@@ -160,9 +160,9 @@ describe('the draft', () => {
 
   it('is not written while its YAML is broken, and the entry is opened', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit('id: [erika-mustermann\ntype: person\n')
-    ws.select(undefined)
+    await ws.select(undefined)
     expect(await ws.finish()).toBe(false)
     expect(ws.error).toMatch(/kaputt/)
     expect(ws.selectedPath).toBe(ERIKA)
@@ -175,7 +175,7 @@ describe('the draft', () => {
       throw new ApiError('Der Eintrag ist nicht gültig.', 422, [{ path: '/name', message: 'zu kurz' }])
     }
     const ws = await started(api)
-    someChanges(ws)
+    await someChanges(ws)
     expect(await ws.finish()).toBe(false)
     expect(ws.refused).toEqual([{ path: '/name', message: 'zu kurz' }])
     expect(ws.dirty.length).toBe(2)
@@ -183,7 +183,7 @@ describe('the draft', () => {
 
   it('is proposed: it is not a draft any more, and it stays the one that is worked on', async () => {
     const ws = await started()
-    someChanges(ws)
+    await someChanges(ws)
     expect(await ws.submit()).toBe(true)
     const submitted = ws.submissions.find((c) => c.author === 'anna')!
     expect(submitted.state).toBe('submitted')
@@ -201,7 +201,7 @@ describe('the draft', () => {
   it('sees what was done to it elsewhere', async () => {
     const api = new FakeApi()
     const ws = await started(api)
-    someChanges(ws)
+    await someChanges(ws)
     await ws.finish()
     const own = ws.draft!
     await api.commit([{ path: 'entities/places/zweite-faehre.yaml', text: 'id: zweite-faehre\ntype: place\nname: Zweite Fähre\n' }], [], { branch: own.branch, name: own.name })
@@ -219,7 +219,7 @@ describe('the draft', () => {
   it('ends at the sign-in when the session is over', async () => {
     const api = new FakeApi()
     const ws = await started(api)
-    api.entries = async () => {
+    api.index = async () => {
       throw new SignedOut()
     }
     await ws.load()
@@ -237,8 +237,9 @@ describe('switching to another submission', () => {
     const ws = await started(api)
     expect(await ws.switchTo(BERND)).toBe(true)
     expect(ws.editable).toBe(true)
+    await ws.ensure([FEUERWEHR])
     expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).toContain('e. V.')
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# fixed\n')
     expect(await ws.finish()).toBe(true)
     // It went to bernd's branch, and the submission is still his.
@@ -249,7 +250,7 @@ describe('switching to another submission', () => {
 
   it('asks first about what is unsaved, and stays where it is if the person does not want to switch', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# open\n')
     expect(await ws.switchTo(BERND)).toBe(false)
     expect(ws.switching).toEqual({ branch: BERND })
@@ -261,19 +262,20 @@ describe('switching to another submission', () => {
 
   it('throws away what is unsaved when the person says so', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# open\n')
     await ws.switchTo(BERND)
     await ws.answerSwitch('discard')
     expect(ws.branch).toBe(BERND)
     expect(ws.dirty).toHaveLength(0)
+    await ws.ensure([ERIKA])
     expect(ws.entries.find((e) => e.path === ERIKA)!.text).not.toContain('# open')
   })
 
   it('saves what is unsaved to the branch that was worked on, and then switches', async () => {
     const api = new FakeApi()
     const ws = await started(api)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# kept\n')
     await ws.switchTo(BERND)
     await ws.answerSwitch('save')
@@ -292,13 +294,13 @@ describe('switching to another submission', () => {
   it('keeps several drafts apart: a new draft starts from the base, the other one stays as it was', async () => {
     const api = new FakeApi()
     const ws = await started(api)
-    someChanges(ws)
+    await someChanges(ws)
     await ws.finish()
     const first = ws.active!
     await ws.switchTo(undefined)
     expect(ws.branch).toBeUndefined()
     expect(ws.entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.finish()
     const second = ws.active!
@@ -311,7 +313,7 @@ describe('switching to another submission', () => {
   it('comes back to the newest own draft when the page is opened again', async () => {
     const api = new FakeApi()
     const first = await started(api)
-    someChanges(first)
+    await someChanges(first)
     await first.finish()
     const again = await started(api)
     expect(again.branch).toBe(first.branch)
@@ -322,7 +324,7 @@ describe('switching to another submission', () => {
 describe('a submission that is accepted', () => {
   it('is in the database after that', async () => {
     const ws = await started()
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.submit()
     const mine = ws.submissions.find((c) => c.author === 'anna')!
@@ -339,6 +341,7 @@ describe('a submission that is accepted', () => {
     await api.merge(1)
     await ws.news({ type: 'push' })
     expect(ws.submissions[0].state).toBe('merged')
+    await ws.ensure(['entities/organizations/feuerwehr-schnackenburg.yaml'])
     expect(ws.entries.find((e) => e.path === 'entities/organizations/feuerwehr-schnackenburg.yaml')!.text).toContain('e. V.')
   })
 })
@@ -385,16 +388,16 @@ describe('saving in the background', () => {
       if (this.failing) throw new ApiError('Der Server ist nicht erreichbar.', 502)
       return { ...(await super.commit(...args)), commit: 'abc' }
     }
-    async entries(branch?: string) {
+    async index(branch?: string) {
       this.asked.push(branch)
-      return super.entries(branch)
+      return super.index(branch)
     }
   }
 
   it('counts as saved at once: the editor is up to date while the commit is on its way', async () => {
     const api = new Slow()
     const ws = await started(api)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# note\n')
     expect(await ws.finish(undefined, { wait: false })).toBe(true)
     expect(ws.dirty).toEqual([])
@@ -410,7 +413,7 @@ describe('saving in the background', () => {
   it('takes it back when the commit fails: the entry is unsaved again, and the error is shown', async () => {
     const api = new Slow()
     const ws = await started(api)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# note\n')
     await ws.finish(undefined, { wait: false })
     api.failing = true
@@ -431,7 +434,7 @@ describe('saving in the background', () => {
   it('ignores the news about its own commits, and asks for the base only when it changed', async () => {
     const api = new Slow()
     const ws = await started(api)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# note\n')
     const done = ws.finish()
     await vi.waitFor(() => expect(api.release).toHaveLength(1))
@@ -446,5 +449,73 @@ describe('saving in the background', () => {
     api.asked = []
     await ws.news({ type: 'push' })
     expect(api.asked.sort()).toEqual([undefined, branch].sort())
+  })
+})
+
+describe('entries that are known from the index only', () => {
+  const BERND = 'submission/bernd/feuerwehr-texte'
+  const FEUERWEHR = 'entities/organizations/feuerwehr-schnackenburg.yaml'
+
+  /** An api that counts the entries that are read one by one. */
+  class Reading extends FakeApi {
+    read: string[] = []
+    async entry(path: string, branch?: string) {
+      this.read.push(path)
+      return super.entry(path, branch)
+    }
+  }
+
+  it('are listed with their titles, but not read until they are opened', async () => {
+    const api = new Reading()
+    const ws = await started(api)
+    expect(ws.entries.every((e) => e.unloaded)).toBe(true)
+    expect(titleOf(ws.entries.find((e) => e.path === ERIKA)!)).toBe('Erika Mustermann')
+    expect(ws.dirty).toEqual([])
+    expect(ws.changes).toEqual([])
+    expect(api.read).toEqual([])
+    await ws.select(ERIKA)
+    expect(api.read).toEqual([ERIKA])
+    expect(ws.selected?.unloaded).toBeUndefined()
+    expect(ws.selected?.text).toContain('Erika Mustermann')
+    expect(ws.dirty).toEqual([])
+  })
+
+  it('are read once: opening an entry again, or on another visit, asks for nothing', async () => {
+    const api = new Reading()
+    const ws = await started(api)
+    await ws.select(ERIKA)
+    await ws.select(undefined)
+    await ws.select(ERIKA)
+    expect(api.read).toEqual([ERIKA])
+  })
+
+  it('show what a submission changed without being read: the version tells', async () => {
+    const api = new Reading()
+    const ws = await started(api)
+    await ws.switchTo(BERND)
+    expect(ws.changes.map((c) => [c.kind, c.entry.path])).toEqual([['changed', FEUERWEHR]])
+    expect(api.read).toEqual([])
+  })
+
+  it('are read with what the base has of them, so that a change can be taken back', async () => {
+    const api = new Reading()
+    const ws = await started(api)
+    await ws.switchTo(BERND)
+    await ws.select(FEUERWEHR)
+    expect(api.read.sort()).toEqual([FEUERWEHR, FEUERWEHR])
+    await ws.discard(FEUERWEHR)
+    expect(ws.changes).toEqual([])
+    expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).not.toContain('e. V.')
+  })
+
+  it('deleting an entry reads the entries that refer to it, and takes the references out', async () => {
+    const api = new Reading()
+    const ws = await started(api)
+    await ws.select('entities/events/osterfeuer.yaml')
+    expect(ws.referencesTo('entities/events/osterfeuer.yaml')).toBeGreaterThan(0)
+    expect(await ws.remove()).toBe(true)
+    const read = ws.entries.filter((e) => !e.unloaded).map((e) => e.path)
+    expect(read).toContain('contents/traditionen/osterfeuer-tradition.yaml')
+    expect(ws.entries.find((e) => e.path === 'contents/traditionen/osterfeuer-tradition.yaml')!.data?.about).not.toContain('osterfeuer')
   })
 })

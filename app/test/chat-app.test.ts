@@ -106,7 +106,7 @@ describe('looking things up', () => {
   it('tells the assistant about the app', async () => {
     const agent = new Rounds(() => [{ tool: 'say', text: 'Hi' }])
     const ws = await started(agent)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Hallo')
     const { app } = agent.asked[0]
@@ -120,7 +120,7 @@ describe('what asks first', () => {
   it('saves only when the person presses the button', async () => {
     const agent = new Rounds(() => [{ tool: 'save' }])
     const ws = await started(agent)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Speichere')
     const [question] = confirms(ws)
@@ -169,7 +169,7 @@ describe('what asks first', () => {
 
   it('submits the draft', async () => {
     const ws = await started(new Rounds(() => [{ tool: 'submit_draft' }]))
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Reich es ein')
     const [question] = confirms(ws)
@@ -217,7 +217,7 @@ describe('what asks first', () => {
 
   it('does not switch while there is something unsaved: the person is asked first', async () => {
     const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ tool: 'open_submission', number: 1 }] : [])))
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# open\n')
     await ws.send('Schau #1 an')
     expect(ws.branch).toBeUndefined()

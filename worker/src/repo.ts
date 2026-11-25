@@ -1,6 +1,9 @@
 // The entries of the data repository: reading them, saving one, removing one, always as the signed-in person.
 //
 //   GET    /repo/entries[?branch=submission/…]   every entry of that submission's branch (or of the base branch, if there is no branch yet)
+//   GET    /repo/index[?branch=submission/…]     one line per entry instead of the entries (index-read.ts): as of the newest commit of the base branch,
+//                                            plus what that submission's branch changes
+//   GET    /repo/entry?path=…[&branch=…]     the text and sha of one entry (of the submission's branch if it has it, else of the base branch)
 //   PUT    /repo/entry                       saves one entry as a commit on a submission's branch
 //   DELETE /repo/entry                       removes one entry the same way
 //   POST   /repo/commit                      {branch, name, message, writes: [{path, text}], removals: [path]}: several entries in ONE commit
@@ -15,6 +18,7 @@ import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, rea
 import { call } from './github.js'
 import { Repo } from './repository.js'
 import type { GithubEnv } from './github.js'
+import { readIndex, readOne } from './index-read.js'
 import { pullFor } from './submissions.js'
 import type { Auth } from './session.js'
 
@@ -77,7 +81,7 @@ async function afterCommit(prepared: Awaited<ReturnType<typeof prepare>>, reposi
 }
 
 export async function handleRepo(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
-  if (route !== '/repo/entries' && route !== '/repo/entry' && route !== '/repo/commit') return null
+  if (route !== '/repo/entries' && route !== '/repo/index' && route !== '/repo/entry' && route !== '/repo/commit') return null
   const repo = env.DATA_REPO
   const base = env.BASE_BRANCH ?? 'main'
   if (!repo) return json({ error: 'The server has no DATA_REPO.' }, 500)
@@ -88,6 +92,21 @@ export async function handleRepo(request: Request, route: string, session: Auth,
       const branch = given === null ? undefined : branchOf(given)
       const exists = branch !== undefined && !!(await headOf(session.access, repo, branch, fetchFn))
       return json({ base, branch: branch ?? null, exists, entries: await readEntries(session.access, repo, exists ? branch! : base, fetchFn) })
+    }
+
+    if (route === '/repo/index' && request.method === 'GET') {
+      const given = new URL(request.url).searchParams.get('branch')
+      const branch = given === null ? undefined : branchOf(given)
+      const { exists, ...index } = await readIndex(session.access, repo, base, branch, fetchFn)
+      return json({ base, branch: branch ?? null, exists, ...index })
+    }
+
+    if (route === '/repo/entry' && request.method === 'GET') {
+      const params = new URL(request.url).searchParams
+      const path = storedPath(params.get('path'))
+      const given = params.get('branch')
+      const entry = await readOne(session.access, repo, base, given === null ? undefined : branchOf(given), path, fetchFn)
+      return entry ? json(entry) : json({ error: 'There is no such entry.' }, 404)
     }
 
     if (route === '/repo/entry' && request.method === 'PUT') {

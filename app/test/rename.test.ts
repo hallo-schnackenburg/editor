@@ -25,7 +25,8 @@ async function started() {
   return ws
 }
 /** Renames the open entry the way the form does: the name is typed, then the field is left. */
-function renameTo(ws: Workspace, name: string, confirm?: (n: number) => boolean) {
+async function renameTo(ws: Workspace, name: string, confirm?: (n: number) => boolean) {
+  await ws.ensureAround(ws.selectedPath!)
   ws.edit(ws.selected!.text.replace(/^name: .*$/m, `name: ${name}`))
   return ws.renameOpen(confirm)
 }
@@ -84,8 +85,8 @@ describe('planRename', () => {
 describe('renaming in the workspace', () => {
   it('is one change with what goes with it, and the entries are consistent afterwards', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
-    expect(renameTo(ws, 'Gummern Dorf')).toBeUndefined()
+    await ws.select(GUMMERN)
+    expect(await renameTo(ws, 'Gummern Dorf')).toBeUndefined()
     expect(ws.selectedPath).toBe('entities/places/gummern-dorf.yaml')
     expect(ws.changes).toEqual([]) // typed, not finished: no change yet
     expect(await ws.finish()).toBe(true)
@@ -99,7 +100,7 @@ describe('renaming in the workspace', () => {
 
   it('stops with the reason and changes nothing when the id is in use', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     ws.edit(ws.selected!.text.replace('name: Gummern', 'name: Holtorf'))
     expect(ws.renameOpen()).toMatch(/schon einen Eintrag mit der ID „holtorf“/)
     expect(ws.selectedPath).toBe(GUMMERN)
@@ -112,18 +113,18 @@ describe('renaming in the workspace', () => {
     const ws = new Workspace(new FakeApi(entries))
     await ws.start()
     ws.stopLive()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     let asked = 0
-    expect(renameTo(ws, 'Gummern Dorf', (n) => ((asked = n), false))).toBe('Nicht umbenannt.')
+    expect(await renameTo(ws, 'Gummern Dorf', (n) => ((asked = n), false))).toBe('Nicht umbenannt.')
     expect(asked).toBe(ASK_ABOVE + 2)
     expect(ws.selectedPath).toBe(GUMMERN)
-    expect(renameTo(ws, 'Gummern Dorf', () => true)).toBeUndefined()
+    expect(await renameTo(ws, 'Gummern Dorf', () => true)).toBeUndefined()
     expect(ws.selectedPath).toBe('entities/places/gummern-dorf.yaml')
   })
 
   it('is shown while typing without changing anything, and happens with finish', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     ws.edit(ws.selected!.text.replace('name: Gummern', 'name: Gummern Dorf'))
     expect(ws.previewRename()).toEqual({ path: 'entities/places/gummern-dorf.yaml' })
     expect(ws.selectedPath).toBe(GUMMERN)
@@ -135,9 +136,10 @@ describe('renaming in the workspace', () => {
 
   it('is taken back as a whole', async () => {
     const ws = await started()
+    await ws.ensure(ws.entries.map((e) => e.path))
     const before = new Map(ws.entries.map((e) => [e.path, e.text]))
-    ws.select(GUMMERN)
-    renameTo(ws, 'Gummern Dorf')
+    await ws.select(GUMMERN)
+    await renameTo(ws, 'Gummern Dorf')
     ws.revert() // nothing is saved yet: it is taken back where it is typed
     expect(ws.changes).toEqual([])
     expect(new Map(ws.entries.map((e) => [e.path, e.text]))).toEqual(before)
@@ -147,14 +149,14 @@ describe('renaming in the workspace', () => {
 
   it('goes on from the last name, and is none when the old name is typed again', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
-    renameTo(ws, 'Gummern Dorf')
-    expect(renameTo(ws, 'Gummern an der Elbe')).toBeUndefined()
+    await ws.select(GUMMERN)
+    await renameTo(ws, 'Gummern Dorf')
+    expect(await renameTo(ws, 'Gummern an der Elbe')).toBeUndefined()
     expect(ws.selectedPath).toBe('entities/places/gummern-an-der-elbe.yaml')
     await ws.finish()
     expect(ws.changes).toHaveLength(1)
     expect(ws.changes[0]).toMatchObject({ kind: 'renamed', from: GUMMERN, moved: 1, references: 3 })
-    expect(renameTo(ws, 'Gummern')).toBeUndefined()
+    expect(await renameTo(ws, 'Gummern')).toBeUndefined()
     expect(ws.selectedPath).toBe(GUMMERN)
     await ws.finish()
     expect(ws.changes).toEqual([])
@@ -164,7 +166,7 @@ describe('renaming in the workspace', () => {
   it('moves a new entry without leaving a deleted one behind', async () => {
     const ws = await started()
     ws.create('place', 'Alte Fähre', 'gummern')
-    expect(renameTo(ws, 'Neue Fähre')).toBeUndefined()
+    expect(await renameTo(ws, 'Neue Fähre')).toBeUndefined()
     expect(ws.selectedPath).toBe('entities/places/gummern/neue-faehre.yaml')
     await ws.finish()
     expect(ws.changes.map((c) => c.kind)).toEqual(['renamed'])
@@ -176,8 +178,8 @@ describe('renaming in the workspace', () => {
     const ws = new Workspace(api)
     await ws.start()
     ws.stopLive()
-    ws.select(GUMMERN)
-    renameTo(ws, 'Gummern Dorf')
+    await ws.select(GUMMERN)
+    await renameTo(ws, 'Gummern Dorf')
     expect(await ws.finish()).toBe(true)
     const { entries } = await api.entries(ws.draft!.branch)
     const paths = entries.map((e) => e.path)
@@ -196,9 +198,10 @@ describe('renaming in the workspace', () => {
     const ws = new Workspace(api)
     await ws.start()
     ws.stopLive()
+    await ws.ensure(ws.entries.map((e) => e.path))
     const before = new Map(ws.entries.map((e) => [e.path, e.text]))
-    ws.select(GUMMERN)
-    renameTo(ws, 'Gummern Dorf')
+    await ws.select(GUMMERN)
+    await renameTo(ws, 'Gummern Dorf')
     await ws.finish()
     await ws.discard('entities/places/gummern-dorf.yaml')
     expect(ws.changes).toEqual([])
@@ -211,7 +214,7 @@ describe('renaming in the workspace', () => {
     const ws = new Workspace(api)
     await ws.start()
     ws.stopLive()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     ws.setFolder('Holtorf / Ortsteile')
     expect(ws.previewRename()).toEqual({ path: 'entities/places/holtorf/ortsteile/gummern.yaml' })
     expect(ws.selectedPath).toBe(GUMMERN) // only shown
@@ -228,19 +231,19 @@ describe('renaming in the workspace', () => {
 
   it('does not move a place into itself, or onto an id that is in use, and says why', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     ws.setFolder('gummern')
     expect(ws.previewRename().error).toMatch(/nicht in sich selbst/)
     expect(await ws.finish()).toBe(false)
     ws.setFolder('')
-    ws.select('entities/places/gummern/3.yaml')
+    await ws.select('entities/places/gummern/3.yaml')
     ws.setFolder('')
     expect(ws.previewRename().error ?? ws.previewRename().path).toBeDefined()
   })
 
   it('is taken back with "Verwerfen" before it is saved', async () => {
     const ws = await started()
-    ws.select(GUMMERN)
+    await ws.select(GUMMERN)
     ws.setFolder('holtorf')
     ws.revert()
     expect(ws.moveTo).toEqual({})

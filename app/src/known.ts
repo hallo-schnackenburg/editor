@@ -2,7 +2,25 @@
 // submission only how it differs from the base (a branch is the whole database again, with a few changes). A branch is right as long
 // as its head (the newest commit) is the one it was read at. Kept in the browser too, so that it is there after the page was loaded again.
 
-import type { Comment, EntriesResult, RemoteEntry, Submission, User } from './api.js'
+import type { IndexEntry } from '@contents-editor/core'
+import type { Comment, Submission, User } from './api.js'
+
+/** What is kept of an entry: where it is and the version it is at (the sha of its file). */
+export interface Versioned {
+  path: string
+  sha: string
+}
+
+/** The entries of a branch (of the base branch if it is null) as the server listed them. */
+export interface Listed<T extends Versioned = IndexEntry> {
+  base: string
+  branch: string | null
+  exists: boolean
+  entries: T[]
+}
+
+/** How many texts of entries are kept (by version): the ones that were opened last. */
+const MAX_TEXTS = 300
 
 /** A branch as it differs from the base. */
 export interface BranchRecord {
@@ -10,7 +28,7 @@ export interface BranchRecord {
   head: string
   exists: boolean
   /** The entries that are new or different. */
-  changed: RemoteEntry[]
+  changed: IndexEntry[]
   /** The paths of the base that the branch does not have. */
   removed: string[]
 }
@@ -31,7 +49,9 @@ export interface Snapshot {
   user?: User
   view?: View
   submissions: Submission[]
-  base?: EntriesResult
+  base?: Listed
+  /** The texts of entries that were opened, by version. */
+  texts?: Record<string, string>
   branches: Record<string, BranchRecord>
   comments: Record<number, Comment[]>
 }
@@ -43,18 +63,18 @@ export interface Store {
   clear(): Promise<void>
 }
 
-export function deltaOf(base: EntriesResult, result: EntriesResult, head: string): BranchRecord {
-  const was = new Map(base.entries.map((e) => [e.path, e.text]))
+export function deltaOf(base: Listed, result: Listed, head: string): BranchRecord {
+  const was = new Map(base.entries.map((e) => [e.path, e.sha]))
   const has = new Set(result.entries.map((e) => e.path))
   return {
     head,
     exists: result.exists,
-    changed: result.entries.filter((e) => was.get(e.path) !== e.text),
+    changed: result.entries.filter((e) => was.get(e.path) !== e.sha),
     removed: base.entries.filter((e) => !has.has(e.path)).map((e) => e.path),
   }
 }
 
-export function applyDelta(base: EntriesResult, record: BranchRecord, branch: string): EntriesResult {
+export function applyDelta(base: Listed, record: BranchRecord, branch: string): Listed {
   const gone = new Set(record.removed)
   const changed = new Map(record.changed.map((e) => [e.path, e]))
   const entries = [...base.entries.filter((e) => !gone.has(e.path) && !changed.has(e.path)), ...record.changed].sort((a, b) => a.path.localeCompare(b.path))
@@ -62,14 +82,16 @@ export function applyDelta(base: EntriesResult, record: BranchRecord, branch: st
 }
 
 export class Known {
-  base: EntriesResult | undefined
+  base: Listed | undefined
   readonly branches = new Map<string, BranchRecord>()
   readonly comments = new Map<number, Comment[]>()
+  /** The texts of the entries that were opened, by version (the sha tells what is in it, so they never go out of date). */
+  readonly texts = new Map<string, string>()
   submissions: Submission[] = []
   view: View | undefined
 
   /** A new base: the branches keep what they have (they are expressed against the new one). */
-  setBase(base: EntriesResult): void {
+  setBase(base: Listed): void {
     const old = this.base
     if (old) {
       for (const [branch, record] of this.branches) this.branches.set(branch, deltaOf(base, applyDelta(old, record, branch), record.head))
@@ -78,12 +100,12 @@ export class Known {
   }
 
   /** What was read of a branch. */
-  setBranch(branch: string, result: EntriesResult, head: string | undefined): void {
+  setBranch(branch: string, result: Listed, head: string | undefined): void {
     if (this.base) this.branches.set(branch, deltaOf(this.base, result, head ?? ''))
   }
 
   /** What is known of a branch (undefined: the base branch). */
-  recall(branch: string | undefined): EntriesResult | undefined {
+  recall(branch: string | undefined): Listed | undefined {
     if (branch === undefined) return this.base
     const record = this.branches.get(branch)
     return this.base && record ? applyDelta(this.base, record, branch) : undefined
@@ -95,6 +117,21 @@ export class Known {
     return !!record && !!head && record.head === head
   }
 
+  /** The text of a version that was read, or undefined. */
+  text(sha: string): string | undefined {
+    return this.texts.get(sha)
+  }
+
+  /** Keeps the text of a version (the oldest ones go when there are many). */
+  keepText(sha: string, text: string): void {
+    this.texts.delete(sha)
+    this.texts.set(sha, text)
+    for (const old of this.texts.keys()) {
+      if (this.texts.size <= MAX_TEXTS) break
+      this.texts.delete(old)
+    }
+  }
+
   forget(branch: string): void {
     this.branches.delete(branch)
   }
@@ -103,17 +140,19 @@ export class Known {
     this.base = undefined
     this.branches.clear()
     this.comments.clear()
+    this.texts.clear()
     this.submissions = []
     this.view = undefined
   }
 
   snapshot(user: User): Snapshot {
-    return { login: user.login, user, view: this.view, submissions: this.submissions, base: this.base, branches: Object.fromEntries(this.branches), comments: Object.fromEntries(this.comments) }
+    return { login: user.login, user, view: this.view, submissions: this.submissions, base: this.base, texts: Object.fromEntries(this.texts), branches: Object.fromEntries(this.branches), comments: Object.fromEntries(this.comments) }
   }
 
   restore(snapshot: Snapshot): void {
     this.clear()
     this.base = snapshot.base
+    for (const [sha, text] of Object.entries(snapshot.texts ?? {})) this.texts.set(sha, text)
     this.view = snapshot.view
     this.submissions = snapshot.submissions
     for (const [branch, record] of Object.entries(snapshot.branches)) this.branches.set(branch, record)

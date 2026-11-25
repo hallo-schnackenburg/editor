@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "validate-repo": "tsx scripts/validate-repo.ts"
+    "validate-repo": "tsx scripts/validate-repo.ts",
+    "build-index": "tsx scripts/build-index.ts"
   },
   "dependencies": {
     "ajv": "^8.20.0",

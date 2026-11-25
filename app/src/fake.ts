@@ -3,8 +3,8 @@
 // a pull request, saving checks what it saves, a draft is submitted, accepted (squashed into main) or closed.
 // Somebody else (bernd) has a submission waiting, so there is something to look at in the list of submissions.
 
-import { FOLDER_PATH, authorOf, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@contents-editor/core'
-import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type Listener, type News, type User } from './api.js'
+import { FOLDER_PATH, authorOf, indexEntry, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@contents-editor/core'
+import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type IndexResult, type RemoteEntry, type Listener, type News, type User } from './api.js'
 
 const SEED = import.meta.glob('../../core/test/fixtures/examples/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -62,6 +62,19 @@ export class FakeApi implements Api {
     const own = branch ? this.branches.get(branch) : undefined
     const files = own ?? this.main
     return { base: 'main', branch: branch ?? null, exists: !!own, entries: [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, text]) => ({ path, text, sha: sha(text) })) }
+  }
+
+  async index(branch?: string): Promise<IndexResult> {
+    const own = branch ? this.branches.get(branch) : undefined
+    const files = own ?? this.main
+    const headOf = (f: Files) => sha([...f].sort(([a], [b]) => a.localeCompare(b)).map(([p, t]) => `${p}\n${t}`).join('\n'))
+    const entries = [...files].sort(([a], [b]) => a.localeCompare(b)).flatMap(([path, text]) => indexEntry({ path, text }, sha(text)) ?? [])
+    return { base: 'main', branch: branch ?? null, exists: !!own, commit: headOf(this.main), head: headOf(files), entries }
+  }
+
+  async entry(path: string, branch?: string): Promise<RemoteEntry | null> {
+    const text = (branch ? this.branches.get(branch)?.get(path) : undefined) ?? this.main.get(path)
+    return text === undefined ? null : { path, text, sha: sha(text) }
   }
 
   /** The branch to commit to, made from main if there is none; refuses a submission that is finished. */

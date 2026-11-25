@@ -1,7 +1,7 @@
 // What the editor does with entries, without any screen: reading one, finding its problems, changing a field,
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
-import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type Issue, type Lookup } from '@contents-editor/core'
+import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@contents-editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -13,11 +13,34 @@ export interface Entry {
   text: string
   /** The text, parsed (undefined while it is not valid YAML). */
   data?: Data
+  /** Only the line of the index is known (see `makeStub`): the text is a marker, the data is what the index has. */
+  unloaded?: true
 }
+
+/** What stands for the text of an entry whose file is not read: the version it would have (YAML never starts with an @). */
+export const marker = (sha: string): string => `@${sha}`
+export const isMarker = (text: string | undefined): boolean => text !== undefined && text.startsWith('@')
+
+/** An entry as far as the index tells: enough for the tree, the search, the references and the checks of the others; the file is read when it is opened. */
+export function makeStub(line: Line): Entry {
+  const data: Data = { id: line.id ?? line.path, type: line.type, [line.type in MODEL.types ? nameFieldOf(line.type as EntryType) : 'name']: line.title }
+  for (const key of ['kind', 'subtype', 'parent', 'parents', 'date', 'refs'] as const) if (line[key] !== undefined) data[key] = line[key]
+  if (line.stub) data.stub = true
+  if (line.recurring) data.recurring = true
+  if (line.hint) data[line.type === 'content' ? 'published' : 'address'] = line.hint
+  const text = marker(line.sha)
+  return { path: line.path, sha: line.sha, saved: text, text, data, unloaded: true }
+}
+
+/** The ids an entry refers to: from its fields, or (an entry that is not read) from the index. */
+export const refsIn = (entry: Entry): string[] => (entry.unloaded ? ((entry.data?.refs as string[] | undefined) ?? []) : entry.data ? refsOf(entry.data) : [])
 
 export const makeEntry = (path: string, text: string, sha?: string, saved = text): Entry => ({ path, sha, saved, text, data: readObject(text) })
 
-export const withText = (entry: Entry, text: string): Entry => ({ ...entry, text, data: readObject(text) })
+export function withText(entry: Entry, text: string): Entry {
+  const { unloaded: _read, ...rest } = entry
+  return { ...rest, text, data: readObject(text) }
+}
 
 export const isDirty = (entry: Entry) => entry.text !== entry.saved
 
@@ -256,6 +279,8 @@ export interface RenamePlan {
   /** The entry that is renamed first, then the ones below it (their folder is named after it). */
   moves: { before: Entry; after: Entry }[]
   rewrites: { before: Entry; after: Entry }[]
+  /** Paths of entries the plan needs but that are known from the index only: they are read first, else the plan is not carried out. */
+  unread: string[]
 }
 
 /** The field that names an entry: `name`, else `title`. */
@@ -311,13 +336,23 @@ export function planRename(entry: Entry, all: Entry[], taken: (path: string) => 
     return result
   }
 
-  const plan: RenamePlan = { moves: [], rewrites: [] }
+  const plan: RenamePlan = { moves: [], rewrites: [], unread: [] }
   for (const m of moves) {
+    if (m.before.unloaded) {
+      // Known from the index only: its path and id are worked out, its text is for later (`unread`).
+      plan.unread.push(m.before.path)
+      plan.moves.push({ before: m.before, after: { ...m.before, path: m.path, sha: undefined, data: { ...m.before.data, id: m.id } } })
+      continue
+    }
     const text = rewrite(setId(m.before.text, m.id), m.before.data, typeOf(m.before))
     plan.moves.push({ before: m.before, after: makeEntry(m.path, text, undefined, '') })
   }
   for (const e of all) {
     if (moving.includes(e)) continue
+    if (e.unloaded) {
+      if (refsIn(e).some((id) => ids.has(id))) plan.unread.push(e.path)
+      continue
+    }
     const text = rewrite(e.text, e.data, typeOf(e))
     if (text !== e.text) plan.rewrites.push({ before: e, after: withText(e, text) })
   }

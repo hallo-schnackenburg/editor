@@ -5,15 +5,15 @@
 // what the active branch differs from the base branch in. Another submission is chosen with `switchTo`, which asks about what is not
 // saved. The screens only show all this and call these methods.
 
-import { FOLDER_PATH, MODEL, readValue, setField, slugify, submissionBranch, folderTitle, type EntryType, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, MODEL, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@contents-editor/core'
 import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 
 /** How many times the assistant may look things up for one message. */
 const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
 import { ApiError, SignedOut, type Api, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
-import { folderOf, foldersOf, idOf, describeIssue, issuesOf, makeEntry, nameFieldOf, newEntry, planRemoval, planRename, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
-import { Known, MemoryStore, type Store, type View } from './known.js'
+import { folderOf, foldersOf, idOf, describeIssue, isMarker, issuesOf, makeEntry, makeStub, marker, nameFieldOf, newEntry, planRemoval, planRename, refsIn, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { Known, MemoryStore, type Listed, type Store, type View } from './known.js'
 import { Review, type Host } from './review.svelte.js'
 
 /** A save that is on its way: what is written, where, and how things were before (to take it back if it fails). */
@@ -66,6 +66,16 @@ const isOpen = (c: Submission): boolean => c.state === 'draft' || c.state === 's
 
 const texts = (entries: { path: string; text: string }[]): Map<string, string> => new Map(entries.map((e) => [e.path, e.text]))
 
+/** How many entries are read at the same time. */
+const PARALLEL = 8
+
+/** The names of the topics: the folder of each .folder.yaml of the index, by folder (contents/natur). */
+function folderNames(lines: Line[]): Record<string, string> {
+  const names: Record<string, string> = {}
+  for (const line of lines) if (line.type === 'folder') names[line.path.slice(0, line.path.lastIndexOf('/'))] = line.title
+  return names
+}
+
 const VIEW_KEY = 'contents-editor:view'
 
 /** Where the person was last (kept at once, in the browser's storage), if it is theirs. */
@@ -95,6 +105,8 @@ export class Workspace implements Host {
   renames = $state<Rename[]>([])
   selectedPath = $state<string>()
   loading = $state(false)
+  /** The open entry is being read. */
+  opening = $state(false)
   /** Something is being written to the draft. */
   saving = $state(false)
   /** Something went wrong that the person should read. */
@@ -133,6 +145,8 @@ export class Workspace implements Host {
   #saved = $state.raw(new Map<string, string>())
   /** What the base branch has: the changes are the difference to it. */
   #base = $state.raw(new Map<string, string>())
+  /** The lines of the index the base branch has, by path (what the changes show of an entry that is gone). */
+  #baseLines = $state.raw(new Map<string, Line>())
   /** Whether the base was read (it is not asked for again when another submission is opened; news says when it changed). */
   #baseKnown = false
   /** What was read of the repository (also kept in the browser): shown at once, then looked at again. */
@@ -159,7 +173,11 @@ export class Workspace implements Host {
     this.review = new Review(api, this)
   }
 
-  selected = $derived(this.entries.find((e) => e.path === this.selectedPath))
+  /** The open entry, once it is read (an entry that is known from the index only is read when it is opened). */
+  selected = $derived.by(() => {
+    const found = this.entries.find((e) => e.path === this.selectedPath)
+    return found && !found.unloaded ? found : undefined
+  })
   /** What is typed and not saved yet. */
   dirty = $derived(this.entries.filter((e) => this.#saved.get(e.path) !== e.text))
   issues = $derived(this.selected ? issuesOf(this.selected, this.entries) : [])
@@ -201,7 +219,7 @@ export class Workspace implements Host {
       ...renamed,
       ...[...saved.keys()].filter((p) => !base.has(p) && !part.has(p)).map((p): Change => ({ kind: 'new', entry: entryOf(p) })),
       ...[...saved.keys()].filter((p) => base.has(p) && base.get(p) !== saved.get(p) && !part.has(p)).map((p): Change => ({ kind: 'changed', entry: entryOf(p) })),
-      ...[...base].filter(([p]) => !saved.has(p) && !part.has(p)).map(([p, text]): Change => ({ kind: 'removed', entry: makeEntry(p, text, 'base') })),
+      ...[...base].filter(([p]) => !saved.has(p) && !part.has(p)).map(([p, text]): Change => ({ kind: 'removed', entry: isMarker(text) && this.#baseLines.has(p) ? makeStub(this.#baseLines.get(p)!) : makeEntry(p, text, 'base') })),
       // The topics that are not in the base yet.
       ...Object.entries(this.folders).filter(([folder]) => this.#baseFolders[folder] === undefined).map(([folder, title]): Change => ({ kind: 'new', topic: true, entry: makeEntry(`${folder}/.folder.yaml`, `title: ${JSON.stringify(title)}\n`, 'saved') })),
     ]
@@ -209,7 +227,8 @@ export class Workspace implements Host {
   /** The entries of the draft that are not finished (a required field is missing, a reference leads nowhere), with what is missing in words. */
   unfinished = $derived.by(() =>
     this.changes.flatMap((c) => {
-      const entry = c.topic || c.kind === 'removed' ? undefined : this.entries.find((e) => e.path === c.entry.path)
+      const found = c.topic || c.kind === 'removed' ? undefined : this.entries.find((e) => e.path === c.entry.path)
+      const entry = found && !found.unloaded ? found : undefined
       const issues = entry ? issuesOf(entry, this.entries) : []
       return entry && issues.length > 0 ? [{ entry, missing: issues.map((i) => describeIssue(entry, i)) }] : []
     }),
@@ -320,7 +339,7 @@ export class Workspace implements Host {
       const from = this.branch
       const head = this.active?.branch === from ? this.active?.head : undefined // asked before the branch is read: what is read is not older
       // The base is asked for as well (the changes are the difference to it), unless it is known not to have changed.
-      const [fetched, other] = await Promise.all([withBranch ? this.#api.entries(from) : undefined, from !== undefined && withBase ? this.#api.entries(undefined) : undefined])
+      const [fetched, other] = await Promise.all([withBranch ? this.#api.index(from) : undefined, from !== undefined && withBase ? this.#api.index(undefined) : undefined])
       const base = from === undefined ? fetched : other
       if (mine !== this.#loading) return // another branch was chosen meanwhile
       if (base) {
@@ -332,28 +351,15 @@ export class Workspace implements Host {
       if (!result) return
       this.#persist()
       const before = this.#saved
-      const names: Record<string, string> = {}
-      for (const r of result.entries) {
-        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
-        if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
-      }
-      this.folders = names
-      if (base) {
-        const baseNames: Record<string, string> = {}
-        for (const r of base.entries) {
-          const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
-          if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
-        }
-        this.#baseFolders = baseNames
-        this.#base = texts(base.entries.filter((r) => !FOLDER_PATH.test(r.path)))
-      }
-      const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path))
+      this.folders = folderNames(result.entries)
+      if (base) this.#takeBase(base)
+      const loaded = result.entries.filter((r) => r.type !== 'folder')
       // What the person typed (differs from what the branch had) stays, what they moved away or deleted but did not save stays gone, new entries stay.
       const typed = new Map(this.entries.filter((e) => before.get(e.path) !== e.text).map((e) => [e.path, e]))
       const gone = new Set([...before.keys()].filter((p) => !this.entries.some((e) => e.path === p)))
-      const entries = loaded.filter((r) => !gone.has(r.path)).map((r) => typed.get(r.path) ?? makeEntry(r.path, r.text, r.sha))
+      const entries = loaded.filter((r) => !gone.has(r.path)).map((r) => typed.get(r.path) ?? this.#entryOf(r))
       for (const e of typed.values()) if (!loaded.some((r) => r.path === e.path)) entries.push(e)
-      this.#saved = texts(loaded)
+      this.#saved = this.#versions(loaded)
       this.entries = entries.map((e) => (typed.has(e.path) ? e : { ...e, saved: e.text }))
       this.renames = this.renames.filter((g) => g.moves.every((m) => entries.some((e) => e.path === m.to)))
     } catch (error) {
@@ -363,28 +369,34 @@ export class Workspace implements Host {
     }
   }
 
+  /** The entry of a line of the index: read if its text is known (it was opened before), else as far as the index tells. */
+  #entryOf(line: Line): Entry {
+    const text = this.#known.text(line.sha)
+    return text === undefined ? makeStub(line) : makeEntry(line.path, text, line.sha)
+  }
+
+  /** What the maps of saved and base texts hold for the lines: the text if it is known, else the marker of its version. */
+  #versions(lines: Line[]): Map<string, string> {
+    return new Map(lines.map((l) => [l.path, this.#known.text(l.sha) ?? marker(l.sha)]))
+  }
+
+  /** The base the changes are measured against. */
+  #takeBase(base: Listed): void {
+    this.#baseFolders = folderNames(base.entries)
+    const lines = base.entries.filter((r) => r.type !== 'folder')
+    this.#baseLines = new Map(lines.map((l) => [l.path, l]))
+    this.#base = this.#versions(lines)
+  }
+
   /** Shows what was read of a branch before (no waiting; `load` follows with the current state). */
-  #show(result: Awaited<ReturnType<Api['entries']>>): void {
-    const names: Record<string, string> = {}
-    for (const r of result.entries) {
-      const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
-      if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
-    }
-    this.folders = names
+  #show(result: Listed): void {
+    this.folders = folderNames(result.entries)
     // The base the changes are measured against (as far as it was read: it is asked for again if it may have changed).
     const base = result.branch === null ? result : this.#known.base
-    if (base && this.#base.size === 0) {
-      const baseNames: Record<string, string> = {}
-      for (const r of base.entries) {
-        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
-        if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
-      }
-      this.#baseFolders = baseNames
-      this.#base = texts(base.entries.filter((r) => !FOLDER_PATH.test(r.path)))
-    }
-    const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path))
-    this.#saved = texts(loaded)
-    this.entries = loaded.map((r) => ({ ...makeEntry(r.path, r.text, r.sha), saved: r.text }))
+    if (base && this.#base.size === 0) this.#takeBase(base)
+    const loaded = result.entries.filter((r) => r.type !== 'folder')
+    this.#saved = this.#versions(loaded)
+    this.entries = loaded.map((r) => this.#entryOf(r))
   }
 
   /**
@@ -415,7 +427,7 @@ export class Workspace implements Host {
     const selecting = this.review.select(this.active?.number)
     this.review.detailOpen = branch !== undefined
     if (!seen || !fresh || !this.#baseKnown) await this.load({ quiet: seen !== undefined, withBase: !this.#baseKnown, withBranch: !seen || !fresh })
-    if (this.selectedPath && !this.selected) this.selectedPath = undefined
+    if (this.selectedPath && !this.entries.some((e) => e.path === this.selectedPath)) this.selectedPath = undefined
     await selecting
     return true
   }
@@ -444,10 +456,81 @@ export class Workspace implements Host {
     await this.load({ quiet: true })
   }
 
-  select(path: string | undefined): void {
+  /** Opens an entry (or none). Returns when it is read: an entry that is known from the index only is read from the server first. */
+  select(path: string | undefined): Promise<void> {
     this.selectedPath = path
     this.#dropPristine(path)
     this.refused = []
+    return path ? this.ensure([path], true) : Promise.resolve()
+  }
+
+  /**
+   * Reads the entries that are known from the index only (a few at a time), together with what the base has of them, so that changes and
+   * "take back" know both. Whoever needs the text of entries (to open, rename, delete or change them) calls this first.
+   */
+  async ensure(paths: string[], opening = false): Promise<void> {
+    const todo = [...new Set(paths)].filter((p) => this.entries.find((e) => e.path === p)?.unloaded)
+    if (todo.length === 0) return
+    if (opening) this.opening = true
+    try {
+      for (let i = 0; i < todo.length; i += PARALLEL) await Promise.all(todo.slice(i, i + PARALLEL).map((p) => this.#read(p)))
+    } catch (error) {
+      this.#fail(error)
+    } finally {
+      if (opening) this.opening = false
+    }
+  }
+
+  /** Reads an entry with what renaming it touches: the entries below it and the ones that refer to it or to them. */
+  async ensureAround(path: string): Promise<void> {
+    await this.ensure([path])
+    const entry = this.entries.find((e) => e.path === path)
+    const type = entry && typeOf(entry)
+    if (!entry || !type) return
+    const below = MODEL.types[type].class === 'entity' ? this.entries.filter((e) => e.path.startsWith(`${MODEL.types[type].dir}/${idOf(entry)}/`)) : []
+    const ids = new Set([idOf(entry), ...below.map(idOf)])
+    await this.ensure([...below.map((e) => e.path), ...this.entries.filter((e) => refsIn(e).some((id) => ids.has(id))).map((e) => e.path)])
+  }
+
+  async #read(path: string): Promise<void> {
+    const stub = this.entries.find((e) => e.path === path)
+    if (!stub?.unloaded || !stub.sha) return
+    let sha = stub.sha
+    let text = this.#known.text(sha)
+    if (text === undefined) {
+      const fetched = await this.#api.entry(path, this.branch)
+      if (!fetched) throw new Error(`Den Eintrag „${path}“ gibt es nicht mehr. Lade die Einträge neu.`)
+      sha = fetched.sha
+      text = fetched.text
+      this.#known.keepText(sha, text)
+      this.#persist()
+    }
+    // The base has the same version, or its text is asked for too (the changes need both).
+    const baseMark = this.#base.get(path)
+    if (baseMark !== undefined && isMarker(baseMark)) await this.#readBase(path, baseMark === marker(stub.sha) ? text : undefined)
+    // Meanwhile the entry may have been changed or replaced: then what was read is not wanted.
+    const now = this.entries.find((e) => e.path === path)
+    if (!now?.unloaded || now.sha !== stub.sha) return
+    const read = makeEntry(path, text, sha)
+    this.entries = this.entries.map((e) => (e.path === path ? read : e))
+    if (this.#saved.get(path) === marker(stub.sha)) this.#saved = new Map(this.#saved).set(path, text)
+  }
+
+  /** The text of the base's version of an entry (`known` if it is already at hand). */
+  async #readBase(path: string, known?: string): Promise<void> {
+    const mark = this.#base.get(path)
+    if (mark === undefined || !isMarker(mark)) return
+    let text = known
+    if (text === undefined) {
+      text = this.#known.text(mark.slice(1))
+      if (text === undefined) {
+        const fetched = await this.#api.entry(path, undefined)
+        if (!fetched) return
+        text = fetched.text
+        this.#known.keepText(fetched.sha, text)
+      }
+    }
+    if (this.#base.get(path) === mark) this.#base = new Map(this.#base).set(path, text)
   }
 
   /** New entries with a placeholder for a name, as long as nothing was changed: texts as they were made, by path. */
@@ -614,7 +697,7 @@ export class Workspace implements Host {
     this.refused = []
     this.branch = job.ref.branch
     this.#saved = texts(this.entries)
-    this.entries = this.entries.map((e) => ({ ...e, saved: e.text, sha: 'saved' }))
+    this.entries = this.entries.map((e) => (e.unloaded ? e : { ...e, saved: e.text, sha: 'saved' }))
     this.#wanted = ''
     return job
   }
@@ -630,7 +713,7 @@ export class Workspace implements Host {
       if (job.undo) job.undo()
       else if (before) {
         this.#saved = before
-        this.entries = this.entries.map((e) => (before.has(e.path) ? { ...e, saved: before.get(e.path)! } : { ...e, sha: e.sha === 'saved' ? undefined : e.sha }))
+        this.entries = this.entries.map((e) => (e.unloaded ? e : before.has(e.path) ? { ...e, saved: before.get(e.path)! } : { ...e, sha: e.sha === 'saved' ? undefined : e.sha }))
       }
       if (error instanceof ApiError && error.issues.length > 0) this.refused = error.issues
       this.#fail(error)
@@ -665,6 +748,7 @@ export class Workspace implements Host {
    */
   async finish(confirm?: (moving: number) => boolean, options: { wait?: boolean } = {}): Promise<boolean> {
     if (this.editable && this.selected) {
+      await this.#prepareRename(this.selected)
       const error = this.renameOpen(confirm)
       if (error) {
         this.error = error
@@ -685,6 +769,17 @@ export class Workspace implements Host {
     return planRename(entry, this.entries, (path) => this.entries.some((e) => e.path === path), this.moveTo[entry.path])
   }
 
+  /** What a renaming rewrites must be read: the entries that move with the entry, and the ones that refer to any of them. */
+  async #prepareRename(entry: Entry): Promise<void> {
+    let plan: RenamePlan | undefined
+    try {
+      plan = this.#planFor(entry)
+    } catch {
+      return // renameOpen says what is wrong
+    }
+    if (plan) await this.ensure(plan.unread)
+  }
+
   /** Where the open entry would go with its name as it is typed now (nothing is changed), or what is wrong with it. */
   previewRename(): { path?: string; error?: string } {
     const entry = this.selected
@@ -701,6 +796,7 @@ export class Workspace implements Host {
     const entry = this.selected
     if (!entry || !this.editable) return false
     this.renames = this.renames.filter((g) => !g.moves.some((m) => m.to === entry.path))
+    await this.ensure(this.#referrers(entry))
     // The references to it go with it (they are changes of their own, which show in the list).
     const cleaned = new Map(planRemoval(entry, this.entries).map((c) => [c.before.path, c.after]))
     this.entries = this.entries.filter((e) => e.path !== entry.path).map((e) => cleaned.get(e.path) ?? e)
@@ -711,7 +807,13 @@ export class Workspace implements Host {
   /** How many other entries refer to an entry (deleting it takes the references out of them). */
   referencesTo(path: string): number {
     const entry = this.entries.find((e) => e.path === path)
-    return entry ? planRemoval(entry, this.entries).length : 0
+    return entry ? this.#referrers(entry).length : 0
+  }
+
+  /** The paths of the other entries that refer to an entry (the index knows that without reading them). */
+  #referrers(entry: Entry): string[] {
+    const id = idOf(entry)
+    return this.entries.filter((e) => e !== entry && refsIn(e).includes(id)).map((e) => e.path)
   }
 
   /** Takes a change back (and saves that): a new entry disappears, a changed one is as the base has it, a deleted one is there again. */
@@ -719,13 +821,24 @@ export class Workspace implements Host {
     if (!this.editable) return
     if (FOLDER_PATH.test(path)) return this.#discardTopic(path)
     const group = this.renames.find((g) => g.moves.some((m) => m.to === path) || g.moves.some((m) => m.before.path === path))
-    if (group) this.#undoRename(group, this.#base)
-    else if (!this.entries.some((e) => e.path === path)) {
+    if (group) {
+      // What the renaming touched is read, with the texts the base has of it.
+      const paths = [...group.moves.map((m) => m.before.path), ...group.rewrites.map((r) => r.path)]
+      await this.ensure(paths)
+      await Promise.all(paths.map((p) => this.#readBase(p)))
+      this.#undoRename(group, this.#base)
+    } else if (!this.entries.some((e) => e.path === path)) {
+      await this.#readBase(path)
       const text = this.#base.get(path)
-      if (text !== undefined) {
+      if (text !== undefined && !isMarker(text)) {
         const restored = makeEntry(path, text, 'base')
         // The references that were taken out with it come back too (where nothing else was changed in them since).
-        const back = new Map(planRemoval(restored, [...this.#base].map(([p, t]) => makeEntry(p, t, 'base'))).map((c) => [c.before.path, c]))
+        const id = idOf(restored)
+        const referring = [...this.#baseLines.values()].filter((l) => l.refs?.includes(id)).map((l) => l.path)
+        await this.ensure(referring)
+        await Promise.all(referring.map((p) => this.#readBase(p)))
+        const others = referring.flatMap((p) => (isMarker(this.#base.get(p)) ? [] : [makeEntry(p, this.#base.get(p)!, 'base')]))
+        const back = new Map(planRemoval(restored, others).map((c) => [c.before.path, c]))
         this.entries = [...this.entries, restored].map((e) => {
           const c = back.get(e.path)
           return c && c.after.text === e.text ? withText(e, c.before.text) : e
@@ -734,7 +847,11 @@ export class Workspace implements Host {
     } else if (!this.#base.has(path)) {
       this.entries = this.entries.filter((e) => e.path !== path)
       if (this.selectedPath === path) this.select(undefined)
-    } else this.entries = this.entries.map((e) => (e.path === path ? withText(e, this.#base.get(path)!) : e))
+    } else {
+      await this.#readBase(path)
+      const text = this.#base.get(path)
+      if (text !== undefined && !isMarker(text)) this.entries = this.entries.map((e) => (e.path === path ? withText(e, text) : e))
+    }
     this.refused = []
     await this.sync()
   }
@@ -745,11 +862,12 @@ export class Workspace implements Host {
     if (!path || !this.editable) return
     this.#clearMove(path)
     const group = this.renames.find((g) => g.moves.some((m) => m.to === path))
+    const kept = this.#saved.get(path)
     if (group) this.#undoRename(group, this.#saved)
-    else if (!this.#saved.has(path)) {
+    else if (kept === undefined) {
       this.entries = this.entries.filter((e) => e.path !== path)
       this.select(undefined)
-    } else this.entries = this.entries.map((e) => (e.path === path ? withText(e, this.#saved.get(path)!) : e))
+    } else if (!isMarker(kept)) this.entries = this.entries.map((e) => (e.path === path ? withText(e, kept) : e))
     this.refused = []
   }
 
@@ -771,6 +889,7 @@ export class Workspace implements Host {
       this.#clearMove(entry.path)
       return undefined
     }
+    if (plan.unread.length > 0) return 'Es sind noch nicht alle betroffenen Einträge gelesen. Versuch es gleich noch einmal.'
     if (plan.moves.length > ASK_ABOVE && !confirm(plan.moves.length)) return 'Nicht umbenannt.'
     this.#applyRename(plan)
     this.#clearMove(entry.path)
@@ -973,6 +1092,7 @@ export class Workspace implements Host {
     this.renames = []
     this.#saved = new Map()
     this.#base = new Map()
+    this.#baseLines = new Map()
     this.submissions = []
     this.branch = undefined
     this.switching = undefined
@@ -1011,7 +1131,7 @@ export class Workspace implements Host {
           while (next < todo.length && this.user) {
             const c = todo[next++]
             try {
-              const [result, comments] = await Promise.all([this.#api.entries(c.branch), this.#api.comments(c.number)])
+              const [result, comments] = await Promise.all([this.#api.index(c.branch), this.#api.comments(c.number)])
               if (!this.user) return
               if (result.exists) this.#known.setBranch(c.branch, result, c.head)
               this.#known.comments.set(c.number, comments)
@@ -1041,6 +1161,8 @@ export class Workspace implements Host {
       if (was === is) continue
       items.push({ path, kind: was === undefined ? 'added' : is === undefined ? 'removed' : 'modified', ...(was !== undefined ? { before: was } : {}), ...(is !== undefined ? { after: is } : {}) })
     }
+    // An entry that was not read has no text to show: the review asks the server for those.
+    if (items.some((i) => isMarker(i.before) || isMarker(i.after))) return undefined
     return { number: active.number, items }
   })
 

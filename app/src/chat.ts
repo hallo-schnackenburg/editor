@@ -173,7 +173,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         const hits = ws.entries
           .filter((e) => (call.type ? typeOf(e) === call.type : true))
           .filter((e) => {
-            const hay = `${e.path} ${titleOf(e)} ${e.text}`.toLowerCase()
+            const hay = `${e.path} ${titleOf(e)}`.toLowerCase()
             return words.every((w) => hay.includes(w))
           })
           .sort((a, b) => Number(titleOf(b).toLowerCase().includes(words[0] ?? '')) - Number(titleOf(a).toLowerCase().includes(words[0] ?? '')))
@@ -182,7 +182,9 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       }
       case 'read_entry': {
         const found = resolve(call.entry, ws.entries)
-        return 'problem' in found ? found.problem : clip(found.entry.text)
+        if ('problem' in found) return found.problem
+        await ws.ensure([found.entry.path])
+        return clip(ws.entries.find((e) => e.path === found.entry.path)?.text ?? found.entry.text)
       }
       case 'list_changes': {
         const lines = [
@@ -212,10 +214,10 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       case 'open_entry': {
         const found = resolve(call.entry, ws.entries)
         if ('problem' in found) return found.problem
-        ws.select(found.entry.path)
+        await ws.select(found.entry.path)
         target = found.entry.path
         show = found.entry.path
-        return `Geöffnet: ${found.entry.path}\n${clip(found.entry.text)}`
+        return `Geöffnet: ${found.entry.path}\n${clip(ws.entries.find((e) => e.path === found.entry.path)?.text ?? found.entry.text)}`
       }
       case 'open_submission': {
         const sub = ws.submissions.find((s) => s.number === call.number)
@@ -271,9 +273,13 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     switch (call.tool) {
       case 'patch':
         if (!target) note('Dafür muss ein Eintrag geöffnet sein.')
-        else patch(target, call.field, call.value, call.old)
+        else {
+          await ws.ensure([target])
+          patch(target, call.field, call.value, call.old)
+        }
         return undefined
       case 'set_text': {
+        if (target) await ws.ensure([target])
         const entry = target ? ws.entries.find((e) => e.path === target) : undefined
         const type = entry && typeOf(entry)
         if (!entry || !type) note('Dafür muss ein Eintrag geöffnet sein.')
@@ -333,7 +339,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           return 'Nichts ungespeichert.'
         }
         return ask(`Ungespeichertes an „${titleOf(entry)}“ verwerfen?`, 'Verwerfen', async () => {
-          ws.select(entry.path)
+          await ws.select(entry.path)
           ws.revert()
           return 'Verworfen.'
         })
@@ -355,7 +361,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         const { entry } = found
         const refs = ws.referencesTo(entry.path)
         return ask(`„${titleOf(entry)}“ löschen?${refs > 0 ? ` ${refs === 1 ? 'Ein Eintrag verweist' : `${refs} Einträge verweisen`} darauf; die Verweise werden entfernt.` : ''}`, 'Löschen', async () => {
-          ws.select(entry.path)
+          await ws.select(entry.path)
           return (await ws.remove()) ? `„${titleOf(entry)}“ gelöscht.` : ws.error || 'Das hat nicht geklappt.'
         })
       }
@@ -381,6 +387,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           const all = ws.entries.map((e) => (e.path === renamed.path ? renamed : e))
           return { renamed, plan: planRename(renamed, all, (p) => all.some((e) => e.path === p), renaming ? undefined : call.folder) }
         }
+        await ws.ensureAround(entry.path)
         let preview: ReturnType<typeof plan>
         try {
           preview = plan()
@@ -397,7 +404,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         const question = renaming ? `„${titleOf(entry)}“ in „${call.name}“ umbenennen?${effect}` : `„${titleOf(entry)}“ in den Ordner „${call.folder}“ verschieben?${effect}`
         return ask(question, renaming ? 'Umbenennen' : 'Verschieben', async () => {
           const again = plan()
-          ws.select(entry.path)
+          await ws.select(entry.path)
           if (renaming) ws.edit(again.renamed.text)
           else ws.setFolder(call.folder)
           return (await ws.finish(() => true)) ? (renaming ? 'Umbenannt und gespeichert.' : 'Verschoben und gespeichert.') : ws.error || 'Das hat nicht geklappt.'

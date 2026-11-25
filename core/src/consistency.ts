@@ -91,5 +91,25 @@ export function checkRefs(entry: unknown, lookup: Lookup): Issue[] {
   return issues
 }
 
+/** The ids an entry refers to, through the fields that are references (each once, in order of appearance). */
+export function refsOf(entry: unknown): string[] {
+  if (!isObj(entry) || typeof entry.type !== 'string' || !(entry.type in MODEL.types)) return []
+  type Spec = { ref?: readonly string[]; parts?: Record<string, Spec> }
+  const found = new Set<string>()
+  const walk = (specs: Record<string, Spec>, data: Obj) => {
+    for (const [name, spec] of Object.entries(specs)) {
+      const value = data[name]
+      if (spec.parts) {
+        if (isObj(value)) walk(spec.parts, value)
+        continue
+      }
+      if (!spec.ref) continue
+      for (const id of Array.isArray(value) ? value : [value]) if (typeof id === 'string') found.add(id)
+    }
+  }
+  walk(MODEL.types[entry.type as EntryType].fields as Record<string, Spec>, entry)
+  return [...found]
+}
+
 /** Everything that is checked without other entries: the schema's job is done before; this is the rest. */
 export const checkConsistency = (entry: unknown): Issue[] => [...checkFiles(entry), ...checkObject(entry)]

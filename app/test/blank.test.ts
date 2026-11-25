@@ -10,6 +10,6 @@ it('starts a new entry with an empty name, and drops it again when nothing was t
   const path = ws.selectedPath!
   expect(ws.selected!.data?.name ?? '').toBe('')
   expect(ws.isUntouched(path)).toBe(true)
-  ws.select(undefined)
+  await ws.select(undefined)
   expect(ws.entries.some((e) => e.path === path)).toBe(false)
 })

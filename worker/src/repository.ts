@@ -383,20 +383,29 @@ export class Repo {
     const head = await this.head(this.base)
     if (!head) throw new GitHubError(`The branch ${this.base} does not exist.`, 404)
     if (head === since) return { head, files: [] }
+    const found = await this.compare(since, head)
+    // "behind" or "diverged": the branch no longer continues from that commit.
+    if (!found || (found.status !== 'ahead' && found.status !== 'identical')) return null
+    return { head, files: found.files }
+  }
+
+  /**
+   * The files that differ between two commits (what `to` changes against the common ancestor, as a pull request shows it) and how
+   * the two stand to each other. Null if that cannot be told: a commit is not known, or there are more changes than GitHub lists.
+   */
+  async compare(from: string, to: string): Promise<{ status: string; files: ChangedFile[] } | null> {
     const files: ChangedFile[] = []
     for (let page = 1; page <= MAX_CHANGE_PAGES; page++) {
       let data: { status: string; files?: ChangedFile[] }
       try {
-        data = await this.call('GET', `/compare/${since}...${head}?per_page=100&page=${page}`)
+        data = await this.call('GET', `/compare/${from}...${to}?per_page=100&page=${page}`)
       } catch (error) {
         if (error instanceof GitHubError && (error.status === 404 || error.status === 422)) return null
         throw error
       }
-      // "behind" or "diverged": the branch no longer continues from that commit.
-      if (data.status !== 'ahead' && data.status !== 'identical') return null
       const batch = data.files ?? []
       files.push(...batch)
-      if (batch.length < 100) return { head, files }
+      if (batch.length < 100) return { status: data.status, files }
     }
     return null // GitHub lists at most 300 files: more than that is read anew
   }

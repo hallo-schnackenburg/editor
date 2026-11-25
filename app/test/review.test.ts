@@ -14,6 +14,7 @@ async function started(api = new FakeApi()) {
 /** Bernd has a draft called "Fest" that changes Erika. */
 async function withDraft() {
   const s = await started()
+  await s.ws.ensure([ERIKA])
   const text = s.ws.entries.find((e) => e.path === ERIKA)!.text.replace('Erika Mustermann', 'Erika M.')
   await s.api.commit([{ path: ERIKA, text }], [], { branch: 'submission/bernd/fest', name: 'Fest' })
   await s.ws.loadSubmissions()
@@ -99,6 +100,7 @@ describe('doing something with a submission', () => {
     expect(await review.act('merge')).toBe(true)
     expect(review.submission?.state).toBe('merged')
     expect(review.acting).toBeUndefined()
+    await ws.ensure([ERIKA])
     expect(ws.entries.find((e) => e.path === ERIKA)!.text).toContain('Erika M.')
   })
 

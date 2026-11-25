@@ -58,9 +58,9 @@ describe('nothing to wait for', () => {
   class Counting extends FakeApi {
     asked: (string | undefined)[] = []
     details = 0
-    async entries(branch?: string) {
+    async index(branch?: string) {
       this.asked.push(branch)
-      return super.entries(branch)
+      return super.index(branch)
     }
     async submission(number: number) {
       this.details++
@@ -82,6 +82,7 @@ describe('nothing to wait for', () => {
     api.asked = []
     expect(await ws.switchTo(BERND)).toBe(true)
     expect(api.asked).toEqual([])
+    await ws.ensure([FEUERWEHR])
     expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).toContain('e. V.')
   })
 
@@ -109,6 +110,7 @@ describe('nothing to wait for', () => {
     api.asked = []
     await ws.switchTo(BERND)
     expect(api.asked).toEqual([BERND])
+    await ws.ensure([FEUERWEHR])
     expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).toContain('# more')
   })
 
@@ -125,9 +127,9 @@ describe('nothing to wait for', () => {
         await gate
         return super.submissions()
       }
-      async entries(branch?: string) {
+      async index(branch?: string) {
         await gate
-        return super.entries(branch)
+        return super.index(branch)
       }
     }
     const ws = new Workspace(new Waiting(), undefined, store)
@@ -148,9 +150,9 @@ describe('nothing to wait for', () => {
     await store.save({ ...snapshot, login: 'someone-else' })
     let seen = -1
     class Watching extends FakeApi {
-      async entries(branch?: string) {
+      async index(branch?: string) {
         if (seen < 0) seen = ws.entries.length // nothing of the other person's is shown while it is read
-        return super.entries(branch)
+        return super.index(branch)
       }
     }
     const ws = new Workspace(new Watching(), undefined, store)
@@ -164,7 +166,7 @@ describe('nothing to wait for', () => {
   it('shows the details of the own draft when the page is loaded again', async () => {
     const api = new Counting()
     const first = await started(api)
-    first.select('entities/people/erika-mustermann.yaml')
+    await first.select('entities/people/erika-mustermann.yaml')
     first.edit(first.selected!.text + '# note\n')
     await first.finish()
     const ws = await started(api)
@@ -178,7 +180,7 @@ describe('nothing to wait for', () => {
     const api = new Counting()
     const first = await started(api, store)
     // Own draft, and then back on the database: that is where the page comes back to, not to the draft.
-    first.select('entities/people/erika-mustermann.yaml')
+    await first.select('entities/people/erika-mustermann.yaml')
     first.edit(first.selected!.text + '# note\n')
     await first.finish()
     await first.switchTo(undefined)
@@ -190,7 +192,7 @@ describe('nothing to wait for', () => {
 
     // Somebody else's submission, with the entry that was open.
     await onBase.switchTo(BERND)
-    onBase.select(FEUERWEHR)
+    await onBase.select(FEUERWEHR)
     onBase.rememberView()
     await vi.waitFor(async () => expect((await store.load())?.view).toMatchObject({ branch: BERND, path: FEUERWEHR }), { timeout: 3000 })
     const again = await started(api, store)

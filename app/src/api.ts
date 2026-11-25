@@ -1,7 +1,7 @@
 // Everything the app asks of the server goes through this interface: the Worker (HttpApi), or, for trying things
 // out without GitHub, a copy of the examples in memory (fake.ts).
 
-import type { Issue } from '@contents-editor/core'
+import type { IndexEntry, Issue } from '@contents-editor/core'
 import { Live, liveUrl, type News } from './live.js'
 
 export type { News } from './live.js'
@@ -27,6 +27,18 @@ export interface EntriesResult {
   /** True once the submission has a branch; before that, and for the base branch, the entries are the ones of the base. */
   exists: boolean
   entries: RemoteEntry[]
+}
+
+/** The index of the entries (one line each, see core's index-build): the base branch, or the base branch with the changes of a submission. */
+export interface IndexResult {
+  base: string
+  branch: string | null
+  exists: boolean
+  /** The commit of the base branch the entries are as of. */
+  commit: string
+  /** The commit of the submission's branch (the base commit if there is none). */
+  head: string
+  entries: IndexEntry[]
 }
 
 /** A submission is a branch with a pull request: draft (being worked on), submitted (waits for somebody to accept it), merged (accepted) or closed. */
@@ -89,6 +101,10 @@ export interface Api {
   me(): Promise<User | null>
   /** The entries of a submission's branch (of the base branch without one, or while the submission has no branch yet). */
   entries(branch?: string): Promise<EntriesResult>
+  /** The index of a submission (of the base branch without one, or while the submission has no branch yet). */
+  index(branch?: string): Promise<IndexResult>
+  /** One entry, from the submission's branch if it has the file there, else from the base branch. Null if there is none. */
+  entry(path: string, branch?: string): Promise<RemoteEntry | null>
   /** `sha` is the version the submission is based on; missing for a new entry. Returns the new version, and the pull request if there is one now. */
   save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }>
   remove(path: string, sha: string, submission: SubmissionRef): Promise<void>
@@ -159,6 +175,15 @@ export class HttpApi implements Api {
 
   entries(branch?: string): Promise<EntriesResult> {
     return this.call(`/repo/entries${branch ? `?branch=${encodeURIComponent(branch)}` : ''}`).then((r) => this.json<EntriesResult>(r))
+  }
+
+  index(branch?: string): Promise<IndexResult> {
+    return this.call(`/repo/index${branch ? `?branch=${encodeURIComponent(branch)}` : ''}`).then((r) => this.json<IndexResult>(r))
+  }
+
+  async entry(path: string, branch?: string): Promise<RemoteEntry | null> {
+    const response = await this.call(`/repo/entry?path=${encodeURIComponent(path)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`)
+    return response.status === 404 ? null : this.json<RemoteEntry>(response)
   }
 
   save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }> {

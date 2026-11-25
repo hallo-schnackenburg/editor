@@ -11,10 +11,10 @@ const TRADITION = 'contents/traditionen/osterfeuer-tradition.yaml'
 /** An assistant that answers with the calls it is given, and writes down what it was asked. */
 class Scripted implements Agent {
   asked: AgentRequest[] = []
-  constructor(public calls: ToolCall[] | (() => ToolCall[])) {}
+  constructor(public calls: ToolCall[] | (() => ToolCall[] | Promise<ToolCall[]>)) {}
   async respond(request: AgentRequest): Promise<ToolCall[]> {
     this.asked.push(request)
-    return typeof this.calls === 'function' ? this.calls() : this.calls
+    return typeof this.calls === 'function' ? await this.calls() : this.calls
   }
 }
 
@@ -30,7 +30,7 @@ describe('what the assistant is told', () => {
   it('gets the open entry as it is typed now, the entities with id and name, and the conversation without the notes of the app', async () => {
     const agent = new Scripted([{ tool: 'say', text: 'Hallo!' }])
     const ws = await started(agent)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Hi')
     await ws.send('Und weiter?')
@@ -69,7 +69,7 @@ describe('what the assistant is told', () => {
 describe('changing a field', () => {
   it('sets it as an unsaved change of the open entry and asks for its form to be opened; nothing is saved', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'description', value: 'Die Chronistin.' }]))
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     await ws.send('Beschreibe sie')
     expect(ws.selected!.text).toContain('description: Die Chronistin.')
     expect(ws.dirty.map((e) => e.path)).toEqual([ERIKA])
@@ -87,7 +87,7 @@ describe('changing a field', () => {
         { tool: 'patch', field: 'dates', value: [{ start: 'bald' }] },
       ]),
     )
-    ws.select('entities/events/osterfeuer.yaml')
+    await ws.select('entities/events/osterfeuer.yaml')
     await ws.send('Trag die Termine ein')
     const text = ws.selected!.text
     expect(text).toContain('2026-11-28T17:00')
@@ -98,12 +98,12 @@ describe('changing a field', () => {
 
   it('changes the entry that was open when the message was sent, also if another is open when the answer comes', async () => {
     let ws!: Workspace
-    const agent = new Scripted(() => {
-      ws.select(FESTPLATZ)
+    const agent = new Scripted(async () => {
+      await ws.select(FESTPLATZ)
       return [{ tool: 'patch', field: 'description', value: 'Beschreibung.' }]
     })
     ws = await started(agent)
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     await ws.send('x')
     expect(ws.entries.find((e) => e.path === ERIKA)!.text).toContain('description: Beschreibung.')
     expect(ws.entries.find((e) => e.path === FESTPLATZ)!.text).not.toContain('Beschreibung.')
@@ -111,7 +111,7 @@ describe('changing a field', () => {
 
   it('leaves a field alone that the person changed since the assistant saw it', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'address', value: 'Neu 1', old: 'Alt 2' }]))
-    ws.select('entities/places/feuerwehrhaus.yaml')
+    await ws.select('entities/places/feuerwehrhaus.yaml')
     await ws.send('Adresse')
     expect(ws.selected!.text).toContain('Am Markt 3')
     expect(ws.dirty).toEqual([])
@@ -121,7 +121,7 @@ describe('changing a field', () => {
 
   it('removes a field when the value is empty', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'address', value: '', old: 'Am Markt 3, 29493 Schnackenburg' }]))
-    ws.select('entities/places/feuerwehrhaus.yaml')
+    await ws.select('entities/places/feuerwehrhaus.yaml')
     await ws.send('Adresse weg')
     expect(ws.selected!.text).not.toContain('address')
     expect(texts(ws)[1]).toBe('status: Adresse entfernt.')
@@ -135,7 +135,7 @@ describe('changing a field', () => {
         { tool: 'patch', field: 'type', value: 'place' },
       ]),
     )
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     await ws.send('Umbenennen')
     expect(ws.dirty).toEqual([])
     const notes = texts(ws).slice(1)
@@ -155,7 +155,7 @@ describe('changing a field', () => {
         { tool: 'patch', field: 'links', value: [{ label: 'Ohne Adresse' }] },
       ]),
     )
-    ws.select(FESTPLATZ)
+    await ws.select(FESTPLATZ)
     await ws.send('Mach was')
     expect(ws.dirty).toEqual([])
     const notes = texts(ws).slice(1)
@@ -168,7 +168,7 @@ describe('changing a field', () => {
 
   it('sets references to ids that exist, a single one also given as a list', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'parent', value: ['feuerwehrhaus'] }, { tool: 'patch', field: 'kind', value: 'building' }]))
-    ws.select(FESTPLATZ)
+    await ws.select(FESTPLATZ)
     await ws.send('Gehört zum Feuerwehrhaus')
     expect(ws.selected!.data).toMatchObject({ parent: 'feuerwehrhaus', kind: 'building' })
   })
@@ -183,13 +183,13 @@ describe('changing a field', () => {
 describe('setting a text', () => {
   it('sets one role of a content, and only of one that has texts', async () => {
     const ws = await started(new Scripted([{ tool: 'set_text', role: 'social', value: 'Das Osterfeuer brennt!' }]))
-    ws.select(TRADITION)
+    await ws.select(TRADITION)
     await ws.send('Schreib einen Post')
     expect(ws.selected!.data!.text).toMatchObject({ social: 'Das Osterfeuer brennt!\n' })
     expect(texts(ws)[1]).toBe('status: Text „Social Media“ geändert.')
 
     const person = await started(new Scripted([{ tool: 'set_text', role: 'social', value: 'x' }]))
-    person.select(ERIKA)
+    await person.select(ERIKA)
     await person.send('Post')
     expect(person.dirty).toEqual([])
     expect(texts(person)[1]).toBe('status: Person hat keine Texte.')
@@ -199,7 +199,7 @@ describe('setting a text', () => {
 describe('making an entry', () => {
   it('makes it with its fields, opens it, and asks for its form', async () => {
     const ws = await started(new Scripted([{ tool: 'create_entry', type: 'place', name: 'Alte Fähre', folder: 'gummern', fields: { description: 'Hier fuhr die Fähre.', kind: 'other', name: 'Ignoriert' } }]))
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     await ws.send('Lege die Alte Fähre an')
     const entry = ws.selected!
     expect(entry.path).toBe('entities/places/gummern/alte-faehre.yaml')
@@ -232,7 +232,7 @@ describe('making an entry', () => {
 describe('when nothing can be changed, or something goes wrong', () => {
   it('says once that nothing can be changed (nobody is signed in), and changes nothing', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'description', value: 'x' }, { tool: 'patch', field: 'description', value: 'y' }, { tool: 'say', text: 'Schade.' }]))
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     ws.user = null
     await ws.send('Beschreibe')
     expect(ws.dirty).toEqual([])
@@ -285,7 +285,7 @@ describe('the stand-in for the demo', () => {
     const ws = await started(new FakeAgent(0))
     await ws.send('Hallo')
     expect(texts(ws)[1]).toContain('Öffne zuerst einen Eintrag')
-    ws.select(ERIKA)
+    await ws.select(ERIKA)
     await ws.send('Beschreibung: Chronistin des Ortes.')
     expect(ws.selected!.text).toContain('description: Chronistin des Ortes.')
     await ws.send('Was kannst du?')

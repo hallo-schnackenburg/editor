@@ -16,7 +16,7 @@ describe('deleting an entry', () => {
     const ws = await started()
     const before = ws.referencesTo(OSTERFEUER)
     expect(before).toBeGreaterThan(0)
-    ws.select(OSTERFEUER)
+    await ws.select(OSTERFEUER)
     await ws.remove()
     expect(ws.entries.some((e) => JSON.stringify(e.data).includes('"osterfeuer"'))).toBe(false)
     expect(ws.changes.filter((c) => c.kind === 'changed').length).toBe(before)
@@ -30,7 +30,7 @@ describe('saving an entry whose id does not come from its name', () => {
 
   it('keeps the id when something else was changed', async () => {
     const ws = await started()
-    ws.select(FESTPLATZ)
+    await ws.select(FESTPLATZ)
     ws.edit(ws.selected!.text + 'description: Neu.\n')
     expect(ws.previewRename().path).toBeUndefined()
     expect(await ws.finish()).toBe(true)
@@ -40,7 +40,7 @@ describe('saving an entry whose id does not come from its name', () => {
 
   it('follows the name once the name is changed', async () => {
     const ws = await started()
-    ws.select(FESTPLATZ)
+    await ws.select(FESTPLATZ)
     ws.edit(ws.selected!.text.replace('Festplatz am Elbdeich', 'Festplatz Elbdeich'))
     expect(await ws.finish()).toBe(true)
     expect(ws.entries.some((e) => e.path.endsWith('festplatz-elbdeich.yaml'))).toBe(true)
@@ -50,7 +50,7 @@ describe('saving an entry whose id does not come from its name', () => {
 describe('proposing', () => {
   it('shows the submission that was proposed, and it stays the one that is worked on', async () => {
     const ws = await started()
-    ws.select('entities/people/erika-mustermann.yaml')
+    await ws.select('entities/people/erika-mustermann.yaml')
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.finish()
     const number = ws.draft!.number

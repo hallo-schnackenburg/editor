@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
-  import { idOf, nextDates, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext } from './logic.js'
+  import { idOf, nextDates, refsIn, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext } from './logic.js'
   import { ruleText } from './ruletext.js'
   import Chat from './Chat.svelte'
   import Splitter from './Splitter.svelte'
@@ -121,16 +121,7 @@
     const byId = new Map<string, Entry>()
     const back = new Map<string, Entry[]>()
     for (const e of ws.entries) byId.set(idOf(e), e)
-    for (const e of ws.entries) {
-      const type = typeOf(e)
-      if (!type || !e.data) continue
-      for (const [name, field] of Object.entries(MODEL.types[type].fields)) {
-        const value = e.data[name]
-        if (field.kind !== 'ref') continue
-        // A list of ids, or one (a single reference).
-        for (const id of Array.isArray(value) ? value : [value]) if (typeof id === 'string') back.set(id, [...(back.get(id) ?? []), e])
-      }
-    }
+    for (const e of ws.entries) for (const id of refsIn(e)) back.set(id, [...(back.get(id) ?? []), e])
     return { byId, back }
   })
 
