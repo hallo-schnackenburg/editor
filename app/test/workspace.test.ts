@@ -565,3 +565,39 @@ describe('the copy of all texts on this computer', () => {
     expect((await texts.keys()).size).toBe(ws.entries.length)
   })
 })
+
+describe('somebody else changes an entry on the branch while it is being typed in', () => {
+  async function setup() {
+    const api = new FakeApi()
+    const ws = await started(api)
+    await someChanges(ws)
+    expect(await ws.finish()).toBe(true)
+    const branch = ws.branch!
+    await ws.select(ERIKA)
+    return { api, ws, branch }
+  }
+  const theirs = async (api: FakeApi, branch: string, change: (text: string) => string) => {
+    const remote = (await api.entry(ERIKA, branch))!
+    await api.save(ERIKA, change(remote.text), remote.sha, { branch, name: 'x' })
+  }
+
+  it('is merged field by field: what they changed is taken, what was typed stays', async () => {
+    const { api, ws, branch } = await setup()
+    ws.edit(`${ws.selected!.text.trimEnd()}\ndescription: von mir\n`)
+    await theirs(api, branch, (text) => text.replace('Erika M.', 'Erika Maria'))
+    await ws.load({ quiet: true })
+    expect(ws.selected!.text).toContain('description: von mir')
+    expect(ws.selected!.text).toContain('Erika Maria')
+    expect(ws.dirty.map((e) => e.path)).toEqual([ERIKA]) // the typed part is still to be saved
+    expect(ws.chat.at(-1)?.text).toContain('zusammengeführt')
+  })
+
+  it('keeps the typed value of a field that both changed, and says what the other had', async () => {
+    const { api, ws, branch } = await setup()
+    ws.edit(ws.selected!.text.replace('Erika M.', 'Erika Muster'))
+    await theirs(api, branch, (text) => text.replace('Erika M.', 'Erika Maria'))
+    await ws.load({ quiet: true })
+    expect(ws.selected!.text).toContain('name: Erika Muster')
+    expect(ws.chat.at(-1)?.text).toContain('Erika Maria')
+  })
+})

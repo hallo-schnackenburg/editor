@@ -8,7 +8,7 @@ const base = (): ChatRequest => ({
   message: 'Beschreibe den Sportplatz',
   entry: { path: 'entities/places/gummern/sportplatz.yaml', id: 'gummern/sportplatz', text: TEXT },
   index: [{ id: 'gummern', type: 'place', name: 'Gummern' }],
-  app: { viewing: null, draft: null, unsaved: [], changes: 0, submissions: [] },
+  app: { viewing: null, draft: null, unsaved: [], changes: 0, submissions: [], files: [] },
   history: [],
   trail: [],
 })
@@ -46,11 +46,13 @@ describe('what the model is asked', () => {
       unsaved: ['entities/people/erika.yaml'],
       changes: 3,
       submissions: [{ number: 4, name: 'Fest', author: 'bernd', state: 'submitted' }],
+      files: [{ name: 'Brief 1.tif', mime: 'image/tiff', bytes: 20480 }],
     }
     const last = buildModelRequest({ ...base(), app }, 'm').messages.at(-1)!.content as string
     expect(last).toContain('Working in: the submission "Feuerwehr Texte", which somebody else started.')
     expect(last).toContain('Submission worked on: "Einreichung vom 22.11.2026" (draft); 3 entries differ from the database in it.')
     expect(last).toContain('Unsaved: entities/people/erika.yaml.')
+    expect(last).toContain('Brief 1.tif (image/tiff, 20 kB)')
     expect(last).toContain('#4 "Fest" by bernd, submitted')
     expect(buildModelRequest(base(), 'm').messages.at(-1)!.content).toContain('Submission worked on: none yet')
   })
@@ -81,14 +83,15 @@ describe('what the model is asked', () => {
     expect(SYSTEM_PROMPT).toContain('asks the person about first')
   })
 
-  it('knows the types, fields and text roles of the model, but no objects', () => {
+  it('knows the types, fields and text roles of the model, objects included', () => {
     expect(SYSTEM_PROMPT).toContain('place (Ort, entity)')
     expect(SYSTEM_PROMPT).toContain('description (Beschreibung')
     expect(SYSTEM_PROMPT).toContain('kind (Typ: one of: locality (Ort)')
     expect(SYSTEM_PROMPT).toContain('social (Social Media), at most 2200 characters')
-    expect(SYSTEM_PROMPT).not.toContain('(Objekt, object)')
+    expect(SYSTEM_PROMPT).toContain('(Objekt, object)')
     const create = TOOLS.find((t) => t.name === 'create_entry')!.input_schema.properties as any
-    expect(create.type.enum).not.toContain('object')
+    expect(create.type.enum).toContain('object')
+    expect(create.kind.enum).toEqual(['image', 'document', 'audio', 'video', 'group'])
     expect(create.type.enum).toContain('place')
   })
 
@@ -129,7 +132,7 @@ describe('the answer of the model', () => {
     expect(calls).toEqual([
       { tool: 'patch', field: 'description', value: 'Der Sportplatz.', old: undefined },
       { tool: 'set_text', role: 'social', value: 'Heute!' },
-      { tool: 'create_entry', type: 'place', name: 'Alte Fähre', folder: 'gummern', fields: { description: 'Fähre' } },
+      { tool: 'create_entry', type: 'place', name: 'Alte Fähre', folder: 'gummern', fields: { description: 'Fähre' }, kind: undefined, files: undefined },
       { tool: 'say', text: 'Fertig.' },
       { tool: 'say', text: 'Und noch etwas.' },
     ])
@@ -142,13 +145,28 @@ describe('the answer of the model', () => {
         use('patch', { field: 'description', value: 'unbekannt' }),
         use('patch', { field: 'description', value: '<UNKNOWN>' }),
         use('set_text', { role: 'nonsense', value: 'x' }),
-        use('create_entry', { type: 'object', name: 'Bild' }), // no objects in the chat
         use('create_entry', { type: 'place', name: '?' }),
         use('create_entry', { type: 'place', name: 'Fähre', fields: { description: '?', kind: 'street' } }),
         use('unknown_tool', {}),
       ],
     })
-    expect(calls).toEqual([{ tool: 'create_entry', type: 'place', name: 'Fähre', folder: undefined, fields: { kind: 'street' } }])
+    expect(calls).toEqual([{ tool: 'create_entry', type: 'place', name: 'Fähre', folder: undefined, fields: { kind: 'street' }, kind: undefined, files: undefined }])
+  })
+
+  it('makes an object from dropped files, and attaches files to one', () => {
+    const calls = toToolCalls({
+      content: [
+        use('create_entry', { type: 'object', name: 'Brief an Anna', kind: 'document', files: [' Brief 1.tif ', 'Brief 2.tif', 3], fields: { date: '1963-07' } }),
+        use('create_entry', { type: 'object', name: 'Foto', kind: 'nonsense' }),
+        use('attach_files', { files: ['a.jpg'], entry: 'abc' }),
+        use('attach_files', { files: [] }),
+      ],
+    })
+    expect(calls).toEqual([
+      { tool: 'create_entry', type: 'object', name: 'Brief an Anna', folder: undefined, fields: { date: '1963-07' }, kind: 'document', files: ['Brief 1.tif', 'Brief 2.tif'] },
+      { tool: 'create_entry', type: 'object', name: 'Foto', folder: undefined, fields: undefined, kind: undefined, files: undefined },
+      { tool: 'attach_files', files: ['a.jpg'], entry: 'abc' },
+    ])
   })
 
   it('knows the tools that look things up, move around and ask first, with the ids the model gave', () => {

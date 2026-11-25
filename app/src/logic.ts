@@ -1,6 +1,7 @@
 // What the editor does with entries, without any screen: reading one, finding its problems, changing a field,
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
+import type { FileEntry } from './prepare.js'
 import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@contents-editor/core'
 
 export type Data = Record<string, unknown>
@@ -182,6 +183,7 @@ export function setValue(entry: Entry, field: string, kind: FieldKind, value: un
     v = typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon) ? { lat, lon } : undefined
   }
   if (kind === 'boolean' && value === false) v = undefined
+  if (kind === 'files' && (value as unknown[]).length === 0) v = undefined
   if (kind === 'group') {
     // The parts that are empty go; without any part the field goes.
     const parts = Object.entries(value as Record<string, unknown>).filter(([, part]) => (Array.isArray(part) ? part.length > 0 : typeof part === 'string' ? part.trim() !== '' : part !== undefined && part !== null))
@@ -190,6 +192,21 @@ export function setValue(entry: Entry, field: string, kind: FieldKind, value: un
   const result = setField(entry.text, field, v, entry.data?.[field])
   if (!result.ok) throw new Error(`The field "${field}" has changed in the meantime.`)
   return result.text
+}
+
+/**
+ * The list of files of an object with one more file: the role it has follows from the kind of the object (the first role of the kind; a file of
+ * what is kept elsewhere is a thumbnail), pages are numbered on, and an object that has room for one file takes the new one in place of the old.
+ */
+export function withFile(existing: FileEntry[], file: FileEntry, kind: string, external: boolean): { files: FileEntry[] } | { problem: string } {
+  const rule = ((MODEL.types.object as unknown as { kinds: Record<string, { files?: { roles?: readonly string[]; numbered?: boolean; max?: number } }> }).kinds[kind]?.files ?? {}) as { roles?: readonly string[]; numbered?: boolean; max?: number }
+  if (existing.some((f) => f.sha256 === file.sha256)) return { problem: 'Diese Datei gehört schon dazu.' }
+  if (!external && rule.max === 0) return { problem: 'Dieses Objekt hat keine eigenen Dateien.' }
+  const entry: FileEntry = { ...file, role: external ? 'thumbnail' : (rule.roles?.[0] ?? 'main') }
+  if (!external && rule.max === 1) return { files: [entry] }
+  if (!external && rule.max !== undefined && existing.length >= rule.max) return { problem: `Hier sind höchstens ${rule.max} Dateien vorgesehen.` }
+  if (rule.numbered && !external) entry.num = Math.max(0, ...existing.map((f) => (typeof f.num === 'number' ? f.num : 0))) + 1
+  return { files: [...existing, entry] }
 }
 
 export const setRole = (entry: Entry, role: string, value: string): string => setText(entry.text, role, value)

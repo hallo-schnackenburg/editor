@@ -7,7 +7,8 @@
 import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@contents-editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
-import { idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withText, type Entry } from './logic.js'
+import { idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'
+import type { FileEntry } from './prepare.js'
 import type { Workspace } from './workspace.svelte.js'
 
 /** An action that waits for the person's "yes". `run` returns what to tell afterwards. */
@@ -160,6 +161,36 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     }
   }
 
+  /** Puts the files dropped into the chat (by their names) into the `files` of an object; what could not be put in is told. */
+  function attach(path: string, names: string[]): string {
+    const entry = ws.entries.find((e) => e.path === path)
+    if (!entry?.data) return 'Der Eintrag ist noch kein gültiges YAML.'
+    let list = (Array.isArray(entry.data.files) ? entry.data.files : []) as FileEntry[]
+    const taken: number[] = []
+    const problems: string[] = []
+    for (const name of names) {
+      const staged = ws.staged.find((s) => s.entry && !taken.includes(s.id) && s.name === name)
+      if (!staged?.entry) {
+        problems.push(`Eine fertig hochgeladene Datei „${name}“ gibt es nicht.`)
+        continue
+      }
+      const next = withFile(list, staged.entry, String(entry.data.kind), entry.data.storage === 'external')
+      if ('problem' in next) problems.push(`„${name}“: ${next.problem}`)
+      else {
+        list = next.files
+        taken.push(staged.id)
+      }
+    }
+    if (taken.length > 0) {
+      ws.setTextOf(path, setValue(entry, 'files', 'files', list))
+      ws.unstage(taken)
+      show = path
+      note(`${taken.length === 1 ? 'Eine Datei' : `${taken.length} Dateien`} zu „${titleOf(entry)}“ hinzugefügt.`)
+    }
+    for (const problem of problems) note(problem)
+    return [taken.length > 0 ? `${taken.length} Datei(en) hinzugefügt.` : '', ...problems].filter(Boolean).join(' ')
+  }
+
   /** What the call answers (shown to the person as notes, told to the assistant as text). */
   async function one(call: ToolCall): Promise<string | undefined> {
     switch (call.tool) {
@@ -302,7 +333,10 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       case 'create_entry': {
         let path: string
         try {
-          ws.create(call.type, call.name, call.folder, { numbered: true })
+          // An object needs its kind first (it decides the files and fields): the one the assistant named, else by what the files are.
+          const staged = (call.files ?? []).map((n) => ws.staged.find((s) => s.entry && s.name === n)?.entry)
+          const kind = call.type === 'object' ? (call.kind ?? (staged.length === 1 && String(staged[0]?.mime ?? '').startsWith('image/') ? 'image' : 'document')) : undefined
+          ws.create(call.type, call.name, call.folder, { numbered: true, kind })
           path = ws.selectedPath!
         } catch (error) {
           note((error as Error).message)
@@ -312,10 +346,17 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         show = path
         note(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
         for (const [field, value] of Object.entries(call.fields ?? {})) patch(path, field, value, undefined, true)
+        if (call.type === 'object' && call.files?.length) attach(path, call.files)
         // An entity the chat makes from a name only is a stub, to be completed: marked, so that it can be found later.
         const made = ws.entries.find((e) => e.path === path)
         if (made && MODEL.types[call.type].class === 'entity' && 'stub' in MODEL.types[call.type].fields && !('description' in (call.fields ?? {}))) ws.edit(setValue(made, 'stub', 'boolean', true))
         return undefined
+      }
+      case 'attach_files': {
+        const found = which(call.entry)
+        if ('problem' in found) return note(found.problem), found.problem
+        if (typeOf(found.entry) !== 'object') return 'Dateien gehören zu Objekten.'
+        return attach(found.entry.path, call.files)
       }
       case 'rename_draft':
         await ws.rename(call.name)

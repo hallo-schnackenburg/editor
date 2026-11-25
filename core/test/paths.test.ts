@@ -64,3 +64,15 @@ describe('the object store', () => {
     expect(() => fileDir('xyz')).toThrow(/sha256/)
   })
 })
+
+describe('parseFilePath', () => {
+  const sha = '9f2c' + '0'.repeat(60)
+  it('knows the paths of the store and refuses all others', async () => {
+    const { parseFilePath } = await import('../src/paths.js')
+    expect(parseFilePath(`files/9f/2c/${sha}/original.tif`)).toEqual({ sha256: sha, kind: 'original' })
+    expect(parseFilePath(`files/9f/2c/${sha}/preview-400.abcdef012345.jpg`)).toEqual({ sha256: sha, kind: 'variant' })
+    expect(parseFilePath(`files/aa/2c/${sha}/original.tif`)).toBeNull()
+    expect(parseFilePath('files/../secret')).toBeNull()
+    expect(parseFilePath(`files/9f/2c/${sha}/other.txt`)).toBeNull()
+  })
+})

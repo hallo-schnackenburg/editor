@@ -31,6 +31,8 @@ export interface AppState {
   changes: number
   /** The submissions of the others that are waiting or being worked on. */
   submissions: { number: number; name: string; author: string; state: string }[]
+  /** Files the person dropped into the chat that are uploaded and belong to no object yet. */
+  files: { name: string; mime: string; bytes: number }[]
 }
 
 /** One round of looking things up: what the model called, and what the app answered. */
@@ -70,7 +72,8 @@ export type ToolCall = { id?: string } & (
   // changes that stay unsaved until "Fertig"
   | { tool: 'patch'; field: string; value: unknown; old?: unknown }
   | { tool: 'set_text'; role: string; value: string }
-  | { tool: 'create_entry'; type: EntryType; name: string; folder?: string; fields?: Record<string, unknown> }
+  | { tool: 'create_entry'; type: EntryType; name: string; folder?: string; fields?: Record<string, unknown>; kind?: string; files?: string[] }
+  | { tool: 'attach_files'; files: string[]; entry?: string }
   | { tool: 'rename_draft'; name: string }
   // asked about first
   | { tool: 'save' }
@@ -89,6 +92,7 @@ export class BadRequest extends Error {}
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
 const text = (x: unknown): string | undefined => (typeof x === 'string' && x.trim() ? x.trim() : undefined)
+const names = (x: unknown): string[] | undefined => (Array.isArray(x) ? x.filter((n): n is string => typeof n === 'string' && n.trim() !== '').map((n) => n.trim()) : undefined)
 const integer = (x: unknown): number | undefined => (Number.isInteger(x) ? (x as number) : undefined)
 
 const MAX_INDEX = 1500
@@ -108,6 +112,7 @@ export function parseChatRequest(data: unknown): ChatRequest {
     throw new BadRequest('app: {viewing, draft, unsaved, changes, submissions} expected.')
   }
   if (app.submissions.length > 60 || app.unsaved.length > 200) throw new BadRequest('app: too many submissions or entries.')
+  if (app.files !== undefined && (!Array.isArray(app.files) || app.files.length > 100)) throw new BadRequest('app.files: list of at most 100 expected.')
   if (!Array.isArray(trail) || trail.length > MAX_STEPS) throw new BadRequest(`trail: list of at most ${MAX_STEPS} expected.`)
 
   return {
@@ -122,6 +127,7 @@ export function parseChatRequest(data: unknown): ChatRequest {
       draft: isRecord(app.draft) && typeof app.draft.name === 'string' && typeof app.draft.state === 'string' ? { name: app.draft.name.slice(0, 120), state: app.draft.state.slice(0, 20) } : null,
       unsaved: app.unsaved.filter((p): p is string => typeof p === 'string').map((p) => p.slice(0, 300)),
       changes: app.changes,
+      files: (Array.isArray(app.files) ? app.files : []).flatMap((f: unknown) => (isRecord(f) && typeof f.name === 'string' ? [{ name: f.name.slice(0, 200), mime: typeof f.mime === 'string' ? f.mime.slice(0, 80) : '', bytes: typeof f.bytes === 'number' ? f.bytes : 0 }] : [])),
       submissions: app.submissions.map((s) => {
         if (!isRecord(s) || typeof s.number !== 'number' || typeof s.name !== 'string' || typeof s.author !== 'string' || typeof s.state !== 'string') throw new BadRequest('app.submissions: {number, name, author, state} expected.')
         return { number: s.number, name: s.name.slice(0, 120), author: s.author.slice(0, 60), state: s.state.slice(0, 20) }
@@ -148,8 +154,7 @@ export function parseChatRequest(data: unknown): ChatRequest {
   }
 }
 
-// The chat makes no objects (they need files, which the browser handles).
-const CHAT_TYPES = ENTRY_TYPES.filter((type) => MODEL.types[type].class !== 'object')
+const CHAT_TYPES = ENTRY_TYPES
 
 interface FieldDef {
   label: string
@@ -228,11 +233,14 @@ Tools that change entries, as unsaved changes the person looks at and finishes w
 - patch: change one field of the OPEN entry. Pass the value you saw as "old", so that nothing the person typed in the meantime is overwritten. A field that is empty or missing has no old value: leave "old" out then. A list (links, references) is always sent whole, with the old list as "old". An empty value removes the field.
 - set_text: set one text role of the open entry (see the roles below). The whole text of that role is sent.
 - create_entry: make a new entry: type, name (the entry is filed under it; its id follows the name), folder (entities: the folder below their type, e.g. "gummern"; contents: the topic) and fields (the other fields, as far as the person said them). It becomes the open entry.
+- attach_files: put files that were dropped into the chat into an object (the open one, or the entry given). Their names are the ones in the list of files; a file belongs to one object only.
 - rename_draft: give the person's draft another name.
 
 Tools the app asks the person about first (with a button), because they are hard to take back or others see them. Call them when the person asks for it; never say you did it, the app tells them:
 - save (like "Fertig": writes everything unsaved to the draft), discard_unsaved (throws away what is unsaved in the open entry), take_back (undoes a saved change of an entry), delete_entry, rename_entry (the id and file follow the name, what lies below moves along, references are rewritten), move_entry (to another folder, entities only), submit_draft, accept_submission, close_submission, comment_submission.
 Without an entry given they concern the open entry.
+
+Objects (the pieces of the archive: photos, letters, recordings, albums): the person drops scans or photos into the chat, and they are uploaded at once; you see their names in the state of the app. To make an object of them call create_entry with type object, kind (image: one picture; document: a letter, a protocol, ... with one file per page, in the order of the names unless the person says otherwise; audio, video; group: an album or collection, no files), name (the title), the fields the person said, and files (the names). Several files are several pages of ONE document, or several images, ask if you cannot tell. Look at the file names for hints (a date, a place), but write nothing into the object that the person did not say or that the names do not show clearly; ask for what is really needed. People, organizations and places in an object are references: search first, ask when several fit, and make an entity from its name only (create_entry, which marks it as incomplete) when there is none. After that open the object again (open_entry) to go on with it. Dates of objects are EDTF (1963, 1963-07, 196X, 1960/1969, 1963?).
 
 Do what you can at once. Never announce ("dann trage ich ... ein") that you will do something after an answer: call the tools now with everything you know, and use say only to ask for what is really missing or to answer. If something is unclear (several entries fit), ask with say instead of guessing.
 
@@ -291,7 +299,10 @@ export const TOOLS = [
     name: { type: 'string', description: 'The name (a content: the title).' },
     folder: { type: 'string', description: 'Entities: the folder below their type. Contents: the topic.' },
     fields: { type: 'object', additionalProperties: true, description: 'Other fields as far as known, e.g. {"description": "..."}.' },
+    kind: { type: 'string', enum: Object.keys((MODEL.types.object as unknown as { kinds: Record<string, unknown> }).kinds), description: 'Only for an object: what it is (image, document, audio, video, group).' },
+    files: { type: 'array', items: { type: 'string' }, description: 'Only for an object: the names of the dropped files that belong to it.' },
   }, ['type', 'name']),
+  tool('attach_files', 'Put files dropped into the chat into an object.', { files: { type: 'array', items: { type: 'string' }, description: 'Their names, as in the list of files.' }, entry: OPEN_ENTRY }, ['files']),
   tool('rename_draft', 'Give the draft another name.', { name: { type: 'string' } }, ['name']),
   tool('save', 'Save everything that is unsaved to the draft ("Fertig"). The person is asked first.'),
   tool('discard_unsaved', 'Throw away what is unsaved in the open entry. The person is asked first.'),
@@ -333,6 +344,7 @@ function describeApp(app: AppState): string {
     app.viewing === null ? 'Working in: the own draft.' : `Working in: the submission "${app.viewing}", which somebody else started.`,
     app.draft ? `Submission worked on: "${app.draft.name}" (${app.draft.state}); ${app.changes} entries differ from the database in it.` : 'Submission worked on: none yet (it is made with the first save).',
     app.unsaved.length > 0 ? `Unsaved: ${app.unsaved.join(', ')}.` : 'Unsaved: nothing.',
+    app.files.length > 0 ? `Files dropped into the chat, uploaded, in no object yet:\n${app.files.map((f) => `  - ${f.name} (${f.mime || 'unknown type'}, ${Math.max(1, Math.round(f.bytes / 1024))} kB)`).join('\n')}` : 'Files dropped into the chat: none.',
     app.submissions.length > 0
       ? `Submissions of others:\n${app.submissions.map((s) => `  #${s.number} "${s.name}" by ${s.author}, ${s.state}`).join('\n')}`
       : 'Submissions of others: none.',
@@ -389,8 +401,11 @@ const PARSERS: Record<string, (input: Parsed) => ToolCall | undefined> = {
           name: text(i.name)!,
           folder: text(i.folder),
           fields: isRecord(i.fields) ? Object.fromEntries(Object.entries(i.fields).filter(([, value]) => !isPlaceholder(value))) : undefined,
+          kind: typeof i.kind === 'string' && i.kind in (MODEL.types.object as unknown as { kinds: Record<string, unknown> }).kinds ? i.kind : undefined,
+          files: names(i.files),
         }
       : undefined,
+  attach_files: (i) => (names(i.files)?.length ? { tool: 'attach_files', files: names(i.files)!, entry: text(i.entry) } : undefined),
   rename_draft: (i) => (text(i.name) ? { tool: 'rename_draft', name: text(i.name)! } : undefined),
   save: () => ({ tool: 'save' }),
   discard_unsaved: () => ({ tool: 'discard_unsaved' }),

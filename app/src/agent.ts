@@ -24,6 +24,8 @@ export interface AppState {
   changes: number
   /** The submissions of the others that are waiting or being worked on. */
   submissions: { number: number; name: string; author: string; state: string }[]
+  /** Files dropped into the chat that are uploaded and belong to no object yet. */
+  files: { name: string; mime: string; bytes: number }[]
 }
 
 /** One round: what the assistant called, and what the app answered to each call. */
@@ -63,7 +65,8 @@ export type ToolCall = { id?: string } & (
   // changes that stay unsaved until "Fertig"; `patch` and `set_text` concern the open entry, `create_entry` opens the new one
   | { tool: 'patch'; field: string; value: unknown; old?: unknown }
   | { tool: 'set_text'; role: string; value: string }
-  | { tool: 'create_entry'; type: EntryType; name: string; folder?: string; fields?: Record<string, unknown> }
+  | { tool: 'create_entry'; type: EntryType; name: string; folder?: string; fields?: Record<string, unknown>; kind?: string; files?: string[] }
+  | { tool: 'attach_files'; files: string[]; entry?: string }
   | { tool: 'rename_draft'; name: string }
   // asked about first
   | { tool: 'save' }

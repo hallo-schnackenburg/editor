@@ -3,6 +3,8 @@
 
 import type { IndexEntry, Issue } from '@contents-editor/core'
 import { Live, liveUrl, type News } from './live.js'
+import type { FileEntry } from './prepare.js'
+import { S3Store, type UploadResult, type Variants } from './uploader.js'
 
 export type { News } from './live.js'
 
@@ -11,6 +13,8 @@ export interface User {
   name: string
   avatar: string
   role: string
+  /** The address the files of the bucket are read from (it is public); none if the server has no bucket. */
+  files?: string
 }
 
 /** An entry as the server has it: where it is, the version it is at (sha), and its text. */
@@ -97,6 +101,8 @@ export interface Listener {
 }
 
 export interface Api {
+  /** Puts a file (and its pictures) into the object store; only what is not there yet is sent. */
+  upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, pictures?: Variants): Promise<UploadResult>
   /** Null if nobody is signed in. */
   me(): Promise<User | null>
   /** The entries of a submission's branch (of the base branch without one, or while the submission has no branch yet). */
@@ -152,6 +158,10 @@ export class ApiError extends Error {
 
 export class HttpApi implements Api {
   constructor(private base = '/api') {}
+
+  upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, pictures?: Variants): Promise<UploadResult> {
+    return new S3Store(this.base).upload(file, entry, onProgress, pictures)
+  }
 
   private async call(path: string, init?: RequestInit): Promise<Response> {
     try {

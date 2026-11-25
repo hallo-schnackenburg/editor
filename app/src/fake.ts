@@ -4,6 +4,8 @@
 // Somebody else (bernd) has a submission waiting, so there is something to look at in the list of submissions.
 
 import { FOLDER_PATH, authorOf, indexEntry, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@contents-editor/core'
+import type { FileEntry } from './prepare.js'
+import { FakeStore, type UploadResult, type Variants } from './uploader.js'
 import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type IndexResult, type RemoteEntry, type Listener, type News, type User } from './api.js'
 
 const SEED = import.meta.glob('../../core/test/fixtures/examples/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
@@ -20,6 +22,10 @@ interface Pull {
 }
 
 export class FakeApi implements Api {
+  upload(file: File, entry: FileEntry, onProgress: (fraction: number) => void, pictures?: Variants): Promise<UploadResult> {
+    return new FakeStore().upload(file, entry, onProgress, pictures)
+  }
+
   private main: Files
   private branches = new Map<string, Files>()
   private pulls: Pull[] = []

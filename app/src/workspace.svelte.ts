@@ -5,7 +5,7 @@
 // what the active branch differs from the base branch in. Another submission is chosen with `switchTo`, which asks about what is not
 // saved. The screens only show all this and call these methods.
 
-import { FOLDER_PATH, MODEL, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, MODEL, mergeObject, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@contents-editor/core'
 import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 
 /** How many times the assistant may look things up for one message. */
@@ -13,6 +13,7 @@ const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
 import { ApiError, SignedOut, type Api, type RemoteEntry, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
 import { folderOf, foldersOf, idOf, describeIssue, isMarker, issuesOf, makeEntry, makeStub, marker, nameFieldOf, newEntry, planRemoval, planRename, refsIn, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { prepareFile, type FileEntry } from './prepare.js'
 import { MemoryTextStore, type TextStore } from './texts.js'
 import { Known, MemoryStore, type Listed, type Store, type View } from './known.js'
 import { Review, type Host } from './review.svelte.js'
@@ -87,6 +88,15 @@ function lastView(login: string): View | undefined {
   } catch {
     return undefined
   }
+}
+
+/** A file dropped into the chat. `entry` is there when it is uploaded: the entry for the `files` of an object. */
+export interface StagedFile {
+  id: number
+  name: string
+  fraction: number
+  entry?: FileEntry
+  error?: string
 }
 
 export class Workspace implements Host {
@@ -184,6 +194,42 @@ export class Workspace implements Host {
     this.#store = store
     this.review = new Review(api, this)
   }
+
+  /** Files dropped into the chat: hashed and uploaded at once, they wait here until an object takes them. */
+  staged = $state<StagedFile[]>([])
+  #stagedId = 0
+
+  /** Takes files for the chat: each is hashed, gets its pictures and is uploaded, and then listed as ready (or with what went wrong). */
+  stage(files: File[]): void {
+    for (const file of files) {
+      const item: StagedFile = { id: ++this.#stagedId, name: file.name, fraction: 0 }
+      this.staged.push(item)
+      const mine = () => this.staged.find((s) => s.id === item.id)
+      void (async () => {
+        try {
+          const prepared = await prepareFile(file, (f) => mine() && (mine()!.fraction = f / 2))
+          const result = await this.upload(file, prepared.entry, (f) => mine() && (mine()!.fraction = 0.5 + f / 2), { preview: prepared.preview, web: prepared.web })
+          if (result.status === 'conflict') throw new Error(result.message ?? 'Der Speicher hat schon eine andere Datei unter diesem Pfad.')
+          const now = mine()
+          if (now) {
+            now.fraction = 1
+            now.entry = prepared.entry
+          }
+        } catch (error) {
+          const now = mine()
+          if (now) now.error = error instanceof Error ? error.message : String(error)
+        }
+      })()
+    }
+  }
+
+  /** A staged file is not wanted any more (or an object has taken it). */
+  unstage(ids: number[]): void {
+    this.staged = this.staged.filter((s) => !ids.includes(s.id))
+  }
+
+  /** Puts a file into the object store (see Api.upload). */
+  upload: Api['upload'] = (...args) => this.#api.upload(...args)
 
   /** The open entry, once it is read (an entry that is known from the index only is read when it is opened). */
   selected = $derived.by(() => {
@@ -370,6 +416,8 @@ export class Workspace implements Host {
       // What the person typed (differs from what the branch had) stays, what they moved away or deleted but did not save stays gone, new entries stay.
       const typed = new Map(this.entries.filter((e) => before.get(e.path) !== e.text).map((e) => [e.path, e]))
       const gone = new Set([...before.keys()].filter((p) => !this.entries.some((e) => e.path === p)))
+      await this.#mergeRemote(typed, before, loaded, from)
+      if (mine !== this.#loading) return
       const entries = loaded.filter((r) => !gone.has(r.path)).map((r) => typed.get(r.path) ?? this.#entryOf(r))
       for (const e of typed.values()) if (!loaded.some((r) => r.path === e.path)) entries.push(e)
       this.#saved = this.#versions(loaded)
@@ -379,6 +427,45 @@ export class Workspace implements Host {
       if (mine === this.#loading) this.#fail(error)
     } finally {
       if (mine === this.#loading) this.loading = false
+    }
+  }
+
+  /**
+   * What the person typed in an entry that somebody else changed on the branch meanwhile is merged with it, field by field: what only the
+   * other side changed is taken, what only this side changed stays, and a field that both changed differently keeps this side's value
+   * (the chat says what the branch had). Without this the next save would put this side's whole text over the other's change.
+   * The merged entries replace the typed ones in `typed`; one that cannot be merged (not readable while it is typed) stays as it is.
+   */
+  async #mergeRemote(typed: Map<string, Entry>, before: Map<string, string>, lines: Line[], branch: string | undefined): Promise<void> {
+    const changed = [...typed.values()].filter((e) => {
+      const line = lines.find((l) => l.path === e.path)
+      const base = before.get(e.path)
+      return e.sha !== undefined && !!line && line.sha !== e.sha && base !== undefined && !isMarker(base) && !e.unloaded
+    })
+    if (changed.length === 0) return
+    const lineOf = (path: string) => lines.find((l) => l.path === path)!
+    try {
+      await this.#recallTexts(changed.map((e) => lineOf(e.path).sha))
+      const missing = changed.filter((e) => this.#known.text(lineOf(e.path).sha) === undefined).map((e) => e.path)
+      if (missing.length > 0) await this.#reading(() => this.#fetchTexts(missing, branch))
+    } catch {
+      return // the next load tries again
+    }
+    for (const e of changed) {
+      const line = lineOf(e.path)
+      const theirs = this.#known.text(line.sha)
+      if (theirs === undefined) continue
+      const merged = mergeObject(before.get(e.path)!, e.text, theirs)
+      if (merged.unreadable) continue
+      typed.set(e.path, makeEntry(e.path, merged.text, line.sha, theirs))
+      const type = typeOf(typed.get(e.path)!)
+      const fields = (type ? MODEL.types[type].fields : {}) as Record<string, { label: string }>
+      const name = titleOf(typed.get(e.path)!)
+      for (const { field, theirs: other } of merged.conflicts) {
+        const shown = typeof other === 'string' ? other : JSON.stringify(other)
+        this.chat.push({ role: 'status', text: `„${name}“: Das Feld „${fields[field]?.label ?? field}“ wurde hier und in der Einreichung verschieden geändert. Ich habe deinen Wert behalten. Dort stand: ${shown || '(leer)'}` })
+      }
+      if (merged.taken.length > 0 && merged.conflicts.length === 0) this.chat.push({ role: 'status', text: `„${name}“ wurde mit der Änderung aus der Einreichung zusammengeführt.` })
     }
   }
 
@@ -1322,6 +1409,7 @@ export class Workspace implements Host {
       draft: this.active ? { name: this.active.name, state: this.active.state } : null,
       unsaved: this.dirty.map((e) => e.path),
       changes: this.changes.length,
+      files: this.staged.flatMap((s) => (s.entry ? [{ name: s.name, mime: String(s.entry.mime ?? ''), bytes: Number(s.entry.bytes ?? 0) }] : [])),
       submissions: this.submissions
         .filter((c) => c.number !== own && (c.state === 'submitted' || c.state === 'draft'))
         .slice(0, 60)

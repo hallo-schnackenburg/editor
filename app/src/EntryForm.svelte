@@ -8,6 +8,7 @@
   import LocationField from './LocationField.svelte'
   import DatesField from './DatesField.svelte'
   import RuleField from './RuleField.svelte'
+  import FilesField from './FilesField.svelte'
   import TextRoles from './TextRoles.svelte'
   import ConfirmDialog from './ConfirmDialog.svelte'
 
@@ -36,6 +37,8 @@
     return !kinds || kinds.includes(String(data('kind')))
   }
   const kinds = $derived((model as { kinds?: Record<string, { label: string; subtypes: Record<string, string> }> } | undefined)?.kinds)
+  // A group has no files of its own.
+  const noFiles = $derived((kinds?.[String(data('kind'))] as { files?: { max?: number } } | undefined)?.files?.max === 0 && data('storage') !== 'external')
   const subtypes = $derived(kinds?.[String(data('kind'))]?.subtypes ?? {})
   // The subtype belongs to the kind: when the kind changes, a subtype of the old one goes.
   function setKind(value: string) {
@@ -136,7 +139,7 @@
       {/if}
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
-        {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true) && applies(field)}
+        {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true) && applies(field) && !(name === 'files' && noFiles)}
         <div class="field" class:bad={forField(name).length > 0}>
           {#if kind !== 'text'}
             <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}</label>
@@ -187,11 +190,7 @@
               {/each}
             </div>
           {:else if kind === 'files'}
-            <ul class="files">
-              {#each data(name) ?? [] as file}
-                <li><span class="mono">{file.role}</span> · {file.mime} · {Math.round((file.bytes ?? 0) / 1024)} kB <span class="muted mono">{file.original_name ?? file.path}</span></li>
-              {/each}
-            </ul>
+            <FilesField value={data(name) ?? []} kind={String(data('kind'))} external={data('storage') === 'external'} base={ws.user?.files} upload={(...args) => ws.upload(...args)} onchange={(files) => set(name, 'files', files)} />
           {:else}
             <span class="muted">Dieses Feld lässt sich nur im YAML ändern.</span>
           {/if}
@@ -240,7 +239,6 @@
   .req { color: var(--bad); }
   .issue { color: var(--bad); font-size: 13px; margin-top: 3px; }
   .field.bad input[type='text'], .field.bad input[type='date'], .field.bad select { border-color: var(--bad); }
-  .files { margin: 0; padding-left: 18px; }
   .parts { display: flex; flex-direction: column; gap: 10px; padding-left: 12px; border-left: 2px solid var(--line); }
   .part > label { display: block; font-weight: 500; margin-bottom: 3px; }
   .yaml { min-height: 28rem; }

@@ -11,3 +11,10 @@ SESSION_SECRET=
 
 # WEBHOOK_SECRET: the secret entered in the GitHub App's webhook settings (any long random string, `openssl rand -hex 32`).
 WEBHOOK_SECRET=
+
+# The object store (Hetzner Object Storage, public bucket) for the files of objects. The browser uploads straight to it with signed URLs.
+# S3_ENDPOINT and S3_BUCKET are variables of wrangler.toml for staging and production; for local development they go here (the bucket of dev).
+S3_ENDPOINT=https://nbg1.your-objectstorage.com
+S3_BUCKET=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=

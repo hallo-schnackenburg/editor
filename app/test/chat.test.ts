@@ -292,3 +292,51 @@ describe('the stand-in for the demo', () => {
     expect(texts(ws).at(-1)).toContain('Demo-KI')
   })
 })
+
+describe('objects made from files dropped into the chat', () => {
+  const file = (name: string, mime = 'image/tiff') => {
+    const sha = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(8, '0').repeat(8)
+    return { sha256: sha, original_name: name, path: `files/${sha.slice(0, 2)}/${sha.slice(2, 4)}/${sha}/original.tif`, mime, bytes: 2048 }
+  }
+  const staged = (ws: Workspace, ...names: string[]) => names.forEach((name, i) => ws.staged.push({ id: i + 1, name, fraction: 1, entry: file(name) }))
+
+  it('tells the assistant which files wait, and makes a document with numbered pages', async () => {
+    const agent = new Scripted([{ tool: 'create_entry', type: 'object', name: 'Brief an Anna', kind: 'document', files: ['Brief 1.tif', 'Brief 2.tif'], fields: { date: '1963-07' } }])
+    const ws = await started(agent)
+    staged(ws, 'Brief 1.tif', 'Brief 2.tif')
+    await ws.send('Das ist ein Brief')
+    expect(agent.asked[0].app.files).toEqual([
+      { name: 'Brief 1.tif', mime: 'image/tiff', bytes: 2048 },
+      { name: 'Brief 2.tif', mime: 'image/tiff', bytes: 2048 },
+    ])
+    const made = ws.selected!
+    expect(made.data).toMatchObject({ type: 'object', kind: 'document', title: 'Brief an Anna', date: '1963-07' })
+    expect((made.data!.files as { role: string; num: number }[]).map((f) => [f.role, f.num])).toEqual([['page', 1], ['page', 2]])
+    expect(ws.staged).toEqual([]) // taken
+  })
+
+  it('makes an image from one picture when it is not told the kind', async () => {
+    const ws = await started(new Scripted([{ tool: 'create_entry', type: 'object', name: 'Dorfplatz', files: ['dorf.tif'] }]))
+    staged(ws, 'dorf.tif')
+    await ws.send('Foto vom Dorfplatz')
+    expect(ws.selected!.data).toMatchObject({ kind: 'image' })
+    expect((ws.selected!.data!.files as { role: string }[]).map((f) => f.role)).toEqual(['main'])
+  })
+
+  it('attaches files to the open object, and says what it could not find', async () => {
+    const ws = await started(new Scripted([{ tool: 'create_entry', type: 'object', name: 'Protokoll', kind: 'document' }, { tool: 'attach_files', files: ['S1.tif', 'fehlt.tif'] }]))
+    staged(ws, 'S1.tif')
+    await ws.send('Protokoll')
+    expect((ws.selected!.data!.files as unknown[]).length).toBe(1)
+    expect(texts(ws).join('\n')).toContain('„fehlt.tif“ gibt es nicht')
+    expect(ws.staged).toEqual([])
+  })
+
+  it('keeps a file that does not fit (a group has none)', async () => {
+    const ws = await started(new Scripted([{ tool: 'create_entry', type: 'object', name: 'Album', kind: 'group', files: ['a.tif'] }]))
+    staged(ws, 'a.tif')
+    await ws.send('Album')
+    expect(ws.selected!.data!.files).toBeUndefined()
+    expect(ws.staged.map((s) => s.name)).toEqual(['a.tif'])
+  })
+})

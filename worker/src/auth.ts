@@ -8,9 +8,11 @@
 // Who may use the tool is decided by GitHub: whoever has write access to the data repository.
 
 import { currentUser, exchangeCode, refreshTokens, repoRole, revoke, type GithubEnv, type Tokens } from './github.js'
+import { objectUrl } from './s3.js'
+import { s3Config, type UploadEnv } from './upload.js'
 import { SESSION_DAYS, challengeOf, randomToken, readCookie, seal, setCookie, unseal, type Auth } from './session.js'
 
-export interface AuthEnv extends GithubEnv {
+export interface AuthEnv extends GithubEnv, UploadEnv {
   SESSION_SECRET?: string
   /** Where the app is reached from outside, e.g. https://contents-editor.schnackenburg.de (no slash at the end). */
   APP_URL?: string
@@ -162,4 +164,11 @@ export function createAuth<E extends AuthEnv = AuthEnv>({ cookiePrefix, me }: Au
 }
 
 // This editor names its cookies after itself.
-export const { readSession, handleAuth } = createAuth({ cookiePrefix: 'contents_editor' })
+export const { readSession, handleAuth } = createAuth<AuthEnv>({
+  cookiePrefix: 'contents_editor',
+  // Where the bucket's files can be read from (it is public): the browser shows previews and pictures from there.
+  me: (env) => {
+    const storage = s3Config(env)
+    return { files: storage ? objectUrl(storage, '').origin : undefined }
+  },
+})
