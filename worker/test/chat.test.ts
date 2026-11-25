@@ -81,14 +81,14 @@ describe('what the model is asked', () => {
     expect(SYSTEM_PROMPT).toContain('asks the person about first')
   })
 
-  it('knows the types, fields and text roles of the model, but no media', () => {
+  it('knows the types, fields and text roles of the model, but no objects', () => {
     expect(SYSTEM_PROMPT).toContain('place (Ort, entity)')
     expect(SYSTEM_PROMPT).toContain('description (Beschreibung')
     expect(SYSTEM_PROMPT).toContain('kind (Typ: one of: locality (Ort)')
     expect(SYSTEM_PROMPT).toContain('social (Social Media), at most 2200 characters')
-    expect(SYSTEM_PROMPT).not.toContain('(Medium, media)')
+    expect(SYSTEM_PROMPT).not.toContain('(Objekt, object)')
     const create = TOOLS.find((t) => t.name === 'create_entry')!.input_schema.properties as any
-    expect(create.type.enum).not.toContain('media')
+    expect(create.type.enum).not.toContain('object')
     expect(create.type.enum).toContain('place')
   })
 
@@ -142,7 +142,7 @@ describe('the answer of the model', () => {
         use('patch', { field: 'description', value: 'unbekannt' }),
         use('patch', { field: 'description', value: '<UNKNOWN>' }),
         use('set_text', { role: 'nonsense', value: 'x' }),
-        use('create_entry', { type: 'media', name: 'Bild' }), // no media in the chat
+        use('create_entry', { type: 'object', name: 'Bild' }), // no objects in the chat
         use('create_entry', { type: 'place', name: '?' }),
         use('create_entry', { type: 'place', name: 'Fähre', fields: { description: '?', kind: 'street' } }),
         use('unknown_tool', {}),

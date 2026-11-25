@@ -1,7 +1,7 @@
 // What the editor does with entries, without any screen: reading one, finding its problems, changing a field,
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
-import { MODEL, checkEvent, occurrences, checkParent, checkPath, checkRefs, entryPath, mediaId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type Issue, type Lookup } from '@contents-editor/core'
+import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type Issue, type Lookup } from '@contents-editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -46,12 +46,23 @@ export function issuesOf(entry: Entry, all: Entry[]): Issue[] {
     if (type) index.set(idOf(e), { type, data: e.data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  return [...checkPath(entry.path, entry.data), ...checkRefs(entry.data, lookup), ...checkParent(entry.data, (id) => index.get(id)), ...checkEvent(entry.data)]
+  return [...checkPath(entry.path, entry.data), ...checkRefs(entry.data, lookup), ...checkParent(entry.data, (id) => index.get(id)), ...checkGroups(entry.data, (id) => index.get(id)), ...checkEvent(entry.data)]
 }
 
 /** The field an issue belongs to: "/about/1" is about, "/text/teaser" is text. "/" belongs to none. */
 /** What an issue says, in words for the person: "Name fehlt". */
 const WORDS: [RegExp, string][] = [
+  [/^not a subtype of /, 'Das ist kein Untertyp dieses Typs'],
+  [/^does not apply to /, 'Gilt nicht für diesen Typ'],
+  [/^a file of .* has the role /, 'Diese Datei hat nicht die Rolle, die dieser Typ verlangt'],
+  [/^the pages are numbered \(num\)$/, 'Die Seiten sind nummeriert (num)'],
+  [/ has at most \d+ files?$/, 'Dieser Typ hat nicht so viele Dateien'],
+  [/ has no files of its own$/, 'Eine Gruppe hat keine eigenen Dateien'],
+  [/^storage is external: say where/, 'Anderswo abgelegt: bitte die Fundstelle angeben'],
+  [/^external only goes with storage: external$/, 'Eine Fundstelle gehört nur zu „Anderswo“'],
+  [/ is not a group$/, 'Das ist keine Gruppe'],
+  [/^an object cannot be in itself/, 'Ein Objekt kann nicht in sich selbst liegen'],
+  [/^not a valid id: a ULID/, 'Keine gültige ID (ULID in Kleinbuchstaben, 26 Zeichen)'],
   [/^a one-off event needs a date$/, 'Ein einmaliges Ereignis braucht mindestens einen Termin'],
   [/^not a date$/, 'Kein gültiges Datum'],
   [/^the end is before the start$/, 'Das Ende liegt vor dem Beginn'],
@@ -104,6 +115,20 @@ export function excludedTargets(entry: Entry, field: string, all: Entry[]): stri
       }
     }
   }
+  if (field === 'parents') {
+    // Only groups hold objects, and a group cannot be put into one that lies in it (a circle).
+    for (let grew = true; grew; ) {
+      grew = false
+      for (const e of all) {
+        const parents = Array.isArray(e.data?.parents) ? e.data.parents : []
+        if (!out.has(idOf(e)) && parents.some((p: unknown) => typeof p === 'string' && out.has(p))) {
+          out.add(idOf(e))
+          grew = true
+        }
+      }
+    }
+    for (const e of all) if (typeOf(e) === 'object' && e.data?.kind !== 'group') out.add(idOf(e))
+  }
   return [...out]
 }
 
@@ -118,7 +143,7 @@ export function groups(entries: Entry[], filter = ''): { type: EntryType; label:
     .filter((g) => g.entries.length > 0)
 }
 
-export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'location' | 'dates' | 'rule' | 'text' | 'files' | 'other'
+export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'location' | 'dates' | 'rule' | 'text' | 'files' | 'group' | 'other'
 
 /** Sets one field. An empty value takes the field out of the entry. The text is the one thing it is based on, so nothing can clash. */
 export function setValue(entry: Entry, field: string, kind: FieldKind, value: unknown): string {
@@ -134,6 +159,11 @@ export function setValue(entry: Entry, field: string, kind: FieldKind, value: un
     v = typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon) ? { lat, lon } : undefined
   }
   if (kind === 'boolean' && value === false) v = undefined
+  if (kind === 'group') {
+    // The parts that are empty go; without any part the field goes.
+    const parts = Object.entries(value as Record<string, unknown>).filter(([, part]) => (Array.isArray(part) ? part.length > 0 : typeof part === 'string' ? part.trim() !== '' : part !== undefined && part !== null))
+    v = parts.length > 0 ? Object.fromEntries(parts) : undefined
+  }
   const result = setField(entry.text, field, v, entry.data?.[field])
   if (!result.ok) throw new Error(`The field "${field}" has changed in the meantime.`)
   return result.text
@@ -163,11 +193,11 @@ export const folderSegments = (folder: string): string[] => folder.split('/').ma
 
 /**
  * A new entry of this type with the name (or title) given. An entity lies in a folder of its type, free below that, and its
- * id is the path ("gummern/3"). A content needs the topic: the one folder it is filed in. Media have no folder to choose.
+ * id is the path ("gummern/3"). A content needs the topic: the one folder it is filed in. An object has no folder to choose (its id is a ULID).
  */
 export function newEntry(type: EntryType, label: string, folder = '', random?: (bytes: Uint8Array) => Uint8Array, options: NewOptions = {}): Entry {
   const t = MODEL.types[type]
-  const slug = t.class === 'media' ? mediaId(label, random) : slugify(label)
+  const slug = t.class === 'object' ? objectId(undefined, random) : slugify(label)
   if (!slug) throw new Error('Der Name ergibt keine gültige ID: mindestens ein Buchstabe oder eine Ziffer.')
   const field = 'name' in t.fields ? 'name' : 'title'
   const quoted = JSON.stringify(label.trim())
@@ -198,7 +228,7 @@ export function newContextFor(path: string, own?: Entry, holder?: Entry): NewCon
   const [top, second, ...rest] = path.split('/')
   if (top === 'entities' && second === undefined) return undefined // the types below it have a plus each
   if (top === 'contents') return { type: 'content', folder: second ?? '' }
-  if (top === 'media') return second === undefined ? { type: 'media', folder: '' } : undefined // the letters below are made by the app
+  if (top === 'objects') return second === undefined ? { type: 'object', folder: '' } : undefined // the folders below are made by the app
   const type = typeAt(`${top}/${second}`)
   if (!type) return undefined
   const folder = rest.join('/')
@@ -234,7 +264,7 @@ export const nameFieldOf = (type: EntryType): 'name' | 'title' => ('name' in MOD
 /**
  * The id and the file follow the name (and, if a `folder` is given, the folder): an entity keeps its folders and takes the slug of the name as the last part, a content keeps its
  * topic and takes the slug as its id. What lies below the entity (its folder, `gummern/3` below `gummern`) moves with it, and every
- * reference to anything that moved is rewritten. Media are not renamed (their ids are made once, with a random part).
+ * reference to anything that moved is rewritten. Objects are not renamed (their ids are made once, a ULID).
  * Returns nothing if there is nothing to do; throws (with words for the person) if the new id is not possible or in use
  * (`taken` tells whether a path is in use), so that nothing is changed.
  */
@@ -242,7 +272,7 @@ export function planRename(entry: Entry, all: Entry[], taken: (path: string) => 
   const type = typeOf(entry)
   if (!type || !entry.data) return undefined
   const t = MODEL.types[type]
-  if (t.class === 'media') return undefined
+  if (t.class === 'object') return undefined
   const name = entry.data[nameFieldOf(type)]
   if (typeof name !== 'string' || !name.trim()) return undefined
   const slug = slugify(name)

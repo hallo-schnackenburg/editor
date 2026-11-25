@@ -62,11 +62,11 @@ describe('planRename', () => {
     expect(plan.moves[0].after.text).toContain('id: die-elbfaehre')
   })
 
-  it('does nothing when the id already fits, without a name, or for media', () => {
+  it('does nothing when the id already fits, without a name, or for an object', () => {
     const entries = all()
     expect(planRename(find(entries, GUMMERN), entries, none)).toBeUndefined()
     expect(planRename(rename(find(entries, GUMMERN), '   '), entries, none)).toBeUndefined()
-    const media = makeEntry('media/a/abc12.yaml', 'id: abc12\ntype: media\ntitle: Neu\n', 'sha')
+    const media = makeEntry(`objects/ae/${'0'.repeat(24)}ae.yaml`, `id: ${'0'.repeat(24)}ae\ntype: object\nkind: image\ntitle: Neu\n`, 'sha')
     expect(planRename(media, [media], none)).toBeUndefined()
   })
 

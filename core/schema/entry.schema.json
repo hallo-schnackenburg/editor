@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/schema/contents.schema.json",
   "$comment": "Generated from contents.yaml by `npm run generate` in core. Do not edit.",
   "title": "Contents entry",
-  "description": "One entry of the contents database (an entity, a content or a media entry). One YAML file per entry.",
+  "description": "One entry of the contents database (an entity, a content or an object). One YAML file per entry.",
   "type": "object",
   "required": [
     "id",
@@ -21,7 +21,7 @@
         "event",
         "thing",
         "content",
-        "media"
+        "object"
       ]
     }
   },
@@ -120,7 +120,7 @@
       "if": {
         "properties": {
           "type": {
-            "const": "media"
+            "const": "object"
           }
         },
         "required": [
@@ -128,12 +128,55 @@
         ]
       },
       "then": {
-        "$ref": "#/$defs/entry_media"
+        "$ref": "#/$defs/entry_object"
       }
     }
   ],
   "unevaluatedProperties": false,
   "$defs": {
+    "edtf": {
+      "description": "EDTF date: 1963, 1963-07, 1963-07-14, 196X, 1963?, 1963~, or an interval like 1960/1969. Validated by form only.",
+      "type": "string",
+      "pattern": "^(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?(?:/(?:\\d{4}|\\d{3}X|\\d{2}XX)(?:-(?:\\d{2}|XX)(?:-(?:\\d{2}|XX))?)?[?~%]?)?$"
+    },
+    "external_entry": {
+      "description": "One place outside of our store where the content can be found. Everything is optional, but an entry says at least something.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "type": {
+          "enum": [
+            "archive",
+            "platform",
+            "website"
+          ]
+        },
+        "site": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the archive or platform, e.g. Arcinsys, YouTube. Text, not an entity."
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^https?://\\S+$"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Call number or id at that place."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retrieved": {
+          "type": "string",
+          "format": "date",
+          "description": "The day somebody last saw the content there."
+        }
+      },
+      "additionalProperties": false
+    },
     "when": {
       "description": "A date (2026-04-04) or a date with the time (2026-04-04T19:00), local time.",
       "type": "string",
@@ -226,7 +269,7 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "file": {
-      "description": "A file in the object store (copied from the archive).",
+      "description": "A file in the object store (copied from the archive). Its role depends on the type of the object (see kinds).",
       "type": "object",
       "required": [
         "role",
@@ -382,6 +425,9 @@
         "description": {
           "type": "string"
         },
+        "stub": {
+          "type": "boolean"
+        },
         "links": {
           "$ref": "#/$defs/links"
         }
@@ -415,6 +461,9 @@
             "type": "string",
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
+        },
+        "stub": {
+          "type": "boolean"
         },
         "links": {
           "$ref": "#/$defs/links"
@@ -477,6 +526,9 @@
         "address": {
           "type": "string"
         },
+        "stub": {
+          "type": "boolean"
+        },
         "links": {
           "$ref": "#/$defs/links"
         }
@@ -533,6 +585,9 @@
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
         },
+        "stub": {
+          "type": "boolean"
+        },
         "links": {
           "$ref": "#/$defs/links"
         }
@@ -577,6 +632,9 @@
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
         },
+        "stub": {
+          "type": "boolean"
+        },
         "links": {
           "$ref": "#/$defs/links"
         }
@@ -619,8 +677,8 @@
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
         },
-        "media": {
-          "description": "Ids of: media.",
+        "objects": {
+          "description": "Ids of: object.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
@@ -638,54 +696,74 @@
         }
       }
     },
-    "entry_media": {
+    "entry_object": {
       "required": [
         "id",
         "type",
-        "files"
+        "kind",
+        "title"
       ],
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{5}$"
+          "pattern": "^[0-7][0-9a-hjkmnp-tv-z]{25}$"
         },
         "subtype": {
           "enum": [
             "photo",
             "drawing",
+            "print",
+            "plan",
+            "letter",
+            "note",
+            "protocol",
+            "brochure",
+            "album",
+            "collection"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "image",
             "document",
             "audio",
-            "video"
+            "video",
+            "group"
           ]
         },
         "title": {
-          "type": "string"
-        },
-        "alt": {
           "type": "string",
           "minLength": 1
         },
-        "caption": {
-          "type": "string"
-        },
-        "creator": {
-          "description": "Ids of: person, organization.",
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
-          }
-        },
-        "license": {
+        "description": {
           "type": "string"
         },
         "date": {
-          "type": "string",
-          "format": "date"
+          "$ref": "#/$defs/edtf"
         },
-        "depicts": {
+        "origin": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "by": {
+              "description": "Ids of: person, organization.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+              }
+            },
+            "place": {
+              "description": "Id of: place.",
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "about": {
           "description": "Ids of: person, organization, place, event, thing.",
           "type": "array",
           "minItems": 1,
@@ -695,9 +773,87 @@
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
         },
-        "files": {
+        "original": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "holder": {
+              "description": "Id of: person, organization.",
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+            },
+            "reference": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uri": {
+              "type": "string",
+              "format": "uri"
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "owner": {
+          "description": "Id of: person, organization.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+        },
+        "parents": {
+          "description": "Ids of: object.",
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+          }
+        },
+        "recipient": {
+          "description": "Ids of: person, organization.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+          }
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2,3}$"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "storage": {
+          "enum": [
+            "local",
+            "external"
+          ]
+        },
+        "external": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/external_entry"
+          }
+        },
+        "files": {
+          "type": "array",
           "items": {
             "$ref": "#/$defs/file"
           }

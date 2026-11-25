@@ -54,7 +54,7 @@
 
   /**
    * The "+" at a folder: the entry is made at once, with a name to be replaced, and opens in the same form as any entry (the person
-   * types the name there; "Verwerfen" takes it back). Media (their name makes the id) and a new topic still ask first.
+   * types the name there; "Verwerfen" takes it back). Objects (they need a type) and a new topic still ask first.
    */
   function create(context: NewContext) {
     leave(() => make(context))
@@ -64,7 +64,7 @@
     ws.review.detailOpen = false
     if (!ws.editable) return void (creating = undefined)
     const type = context.type
-    if (type === undefined || type === 'media' || (type === 'content' && context.folder === '')) return void (creating = context)
+    if (type === undefined || type === 'object' || (type === 'content' && context.folder === '')) return void (creating = context)
     try {
       ws.create(type, 'Neu', context.folder, { parent: context.parent, kind: context.kind, numbered: true, placeholder: true })
       creating = undefined
@@ -140,7 +140,7 @@
     const type = typeOf(e)
     if (type === 'content') return typeof d.published === 'string' ? d.published : ''
     if (type === 'place') return typeof d.address === 'string' ? d.address : ''
-    if (type === 'media') return [MODEL.types.media.subtypes[d.subtype as keyof typeof MODEL.types.media.subtypes], d.date].filter(Boolean).join(' · ')
+    if (type === 'object') return [MODEL.types.object.subtypes[d.subtype as keyof typeof MODEL.types.object.subtypes] ?? MODEL.types.object.kinds[d.kind as keyof typeof MODEL.types.object.kinds]?.label, d.date].filter(Boolean).join(' · ')
     return ''
   }
 

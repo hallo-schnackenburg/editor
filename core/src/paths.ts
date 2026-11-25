@@ -1,6 +1,6 @@
 // Where an entry lives and what its id looks like. The id of an entity is its path below the folder of its type, without
-// .yaml (the folders below are free); the id of a content or media entry is the file name without .yaml. Contents are filed
-// by topic in folders of their own choosing, media below the first character of the id.
+// .yaml (the folders below are free); the id of a content or an object is the file name without .yaml. Contents are filed
+// by topic in folders of their own choosing, objects below the last two characters of the id (a ULID begins with the time).
 
 import { MODEL, type EntryType } from './model.generated.js'
 import type { Issue } from './types.js'
@@ -9,9 +9,9 @@ const SEGMENT = '[a-z0-9][a-z0-9-]*'
 
 /**
  * An entry file: lower-case segments, ending in .yaml. A content lies in exactly one topic folder (contents/<topic>/<id>.yaml),
- * entities and media in the folder of their type (media: below the first character of the id).
+ * entities in the folder of their type, objects below the last two characters of their id.
  */
-export const ENTRY_PATH = new RegExp(`^(?:entities(?:/${SEGMENT})+|contents/${SEGMENT}/${SEGMENT}|media(?:/${SEGMENT})+)\\.yaml$`)
+export const ENTRY_PATH = new RegExp(`^(?:entities(?:/${SEGMENT})+|contents/${SEGMENT}/${SEGMENT}|objects/${SEGMENT}/${SEGMENT})\\.yaml$`)
 
 /** The file that describes a topic folder of the contents (its name on screen, later more). It is not an entry. */
 export const FOLDER_PATH = new RegExp(`^contents/${SEGMENT}/\\.folder\\.yaml$`)
@@ -36,16 +36,19 @@ export function slugify(text: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-/** The id of a media entry: a slug and five random characters, so that titles can repeat. */
-export function mediaId(title: string, random: (bytes: Uint8Array) => Uint8Array = (bytes) => crypto.getRandomValues(bytes)): string {
-  const suffix = Array.from(random(new Uint8Array(5)), (b) => ALPHABET[b % ALPHABET.length]).join('')
-  return `${slugify(title) || 'medium'}-${suffix}`
+const CROCKFORD = '0123456789abcdefghjkmnpqrstvwxyz'
+
+/** The id of an object: a ULID in lower case (10 characters of time, 16 random ones), so that it is unique and sorts by creation. */
+export function objectId(now: number = Date.now(), random: (bytes: Uint8Array) => Uint8Array = (bytes) => crypto.getRandomValues(bytes)): string {
+  let time = ''
+  for (let rest = Math.floor(now), i = 0; i < 10; i++, rest = Math.floor(rest / 32)) time = CROCKFORD[rest % 32] + time
+  return time + Array.from(random(new Uint8Array(16)), (b) => CROCKFORD[b % 32]).join('')
 }
 
 /** The folder and file name of an entry. Entities: the id is the path below the folder of the type. Contents: the folder is the topic (one level), as the author chose it. */
 export function entryPath(type: EntryType, id: string, topic?: string): string {
   const t = MODEL.types[type]
-  if (t.class === 'media') return `${t.dir}/${id[0]}/${id}.yaml`
+  if (t.class === 'object') return `${t.dir}/${id.slice(-2)}/${id}.yaml`
   if (t.class === 'content') {
     if (!topic) throw new Error('A content belongs in a topic folder.')
     return `${t.dir}/${topic}/${id}.yaml`

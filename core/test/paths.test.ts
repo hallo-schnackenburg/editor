@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { checkPath, entryPath, fileDir, mediaId, slugify, variantPath } from '../src/paths.js'
+import { checkPath, entryPath, fileDir, objectId, slugify, variantPath } from '../src/paths.js'
+import { MODEL } from '../src/model.generated.js'
 import { examples } from './fixtures.js'
 
 describe('slugify', () => {
@@ -13,17 +14,23 @@ describe('slugify', () => {
   })
 })
 
-describe('mediaId', () => {
-  it('is the slug and five random characters', () => {
-    expect(mediaId('Kirchturm im Nebel', (b) => b.fill(7))).toBe('kirchturm-im-nebel-hhhhh')
-    expect(mediaId('???', (b) => b.fill(0))).toBe('medium-aaaaa')
+describe('objectId', () => {
+  it('is a ULID in lower case: ten characters of time, sixteen random ones', () => {
+    expect(objectId(0, (b) => b.fill(0))).toBe('0'.repeat(26))
+    expect(objectId(1_764_000_000_000, (b) => b.fill(31)).slice(10)).toBe('z'.repeat(16))
+  })
+  it('sorts by the time it was made and fits the id rule', () => {
+    const rule = new RegExp(MODEL.ids.object.pattern)
+    const a = objectId(1_000_000_000_000), b = objectId(1_000_000_000_001)
+    expect(rule.test(a)).toBe(true)
+    expect(a.slice(0, 10) < b.slice(0, 10)).toBe(true)
   })
 })
 
 describe('entryPath', () => {
   it('follows the type', () => {
     expect(entryPath('person', 'erika-mustermann')).toBe('entities/people/erika-mustermann.yaml')
-    expect(entryPath('media', 'kirchturm-k7x2m')).toBe('media/k/kirchturm-k7x2m.yaml')
+    expect(entryPath('object', '01kb4z8m3q7xv2n5r6t9c0d1ae')).toBe('objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml')
     expect(entryPath('content', 'osterfeuer', 'traditionen')).toBe('contents/traditionen/osterfeuer.yaml')
     expect(() => entryPath('content', 'osterfeuer')).toThrow(/topic/)
   })
@@ -43,7 +50,7 @@ describe('checkPath', () => {
     const entry = { id: 'erika-mustermann', type: 'person' }
     expect(checkPath('entities/people/erika.yaml', entry)[0].message).toMatch(/id must be the path below entities\/people\/ without \.yaml \(erika\)/)
     expect(checkPath('entities/places/erika-mustermann.yaml', entry)[0].message).toMatch(/belongs in entities\/people\//)
-    expect(checkPath('media/x/abc-12345.yaml', { id: 'abc-12345', type: 'media' })[0].message).toMatch(/media\/a\/abc-12345/)
+    expect(checkPath('objects/xx/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml', { id: '01kb4z8m3q7xv2n5r6t9c0d1ae', type: 'object' })[0].message).toMatch(/objects\/ae\/01kb4z8m3q7xv2n5r6t9c0d1ae/)
     expect(checkPath('entities/events/x.yml', { id: 'x', type: 'event' })[0].message).toMatch(/\.yaml/)
     expect(checkPath('somewhere/x.yaml', { id: 'x', type: 'content' })[0].message).toMatch(/contents\//)
   })

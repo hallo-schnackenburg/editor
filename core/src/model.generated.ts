@@ -10,9 +10,9 @@ export const MODEL = {
       "label": "Inhalt",
       "dir": "contents"
     },
-    "media": {
-      "label": "Medium",
-      "dir": "media"
+    "object": {
+      "label": "Objekt",
+      "dir": "objects"
     }
   },
   "ids": {
@@ -22,8 +22,8 @@ export const MODEL = {
     "slug": {
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
-    "media": {
-      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{5}$"
+    "object": {
+      "pattern": "^[0-7][0-9a-hjkmnp-tv-z]{25}$"
     }
   },
   "types": {
@@ -44,6 +44,12 @@ export const MODEL = {
           "kind": "string",
           "required": false,
           "multiline": true
+        },
+        "stub": {
+          "label": "Unvollständig",
+          "kind": "boolean",
+          "required": false,
+          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
         },
         "links": {
           "label": "Links",
@@ -77,6 +83,12 @@ export const MODEL = {
           "ref": [
             "place"
           ]
+        },
+        "stub": {
+          "label": "Unvollständig",
+          "kind": "boolean",
+          "required": false,
+          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
         },
         "links": {
           "label": "Links",
@@ -135,6 +147,12 @@ export const MODEL = {
           "label": "Adresse",
           "kind": "string",
           "required": false
+        },
+        "stub": {
+          "label": "Unvollständig",
+          "kind": "boolean",
+          "required": false,
+          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
         },
         "links": {
           "label": "Links",
@@ -201,6 +219,12 @@ export const MODEL = {
             "place"
           ]
         },
+        "stub": {
+          "label": "Unvollständig",
+          "kind": "boolean",
+          "required": false,
+          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        },
         "links": {
           "label": "Links",
           "kind": "links",
@@ -243,6 +267,12 @@ export const MODEL = {
             "organization"
           ]
         },
+        "stub": {
+          "label": "Unvollständig",
+          "kind": "boolean",
+          "required": false,
+          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        },
         "links": {
           "label": "Links",
           "kind": "links",
@@ -284,12 +314,12 @@ export const MODEL = {
           ],
           "description": "Any entity. The type of the entry it points to says what it is."
         },
-        "media": {
-          "label": "Medien",
+        "objects": {
+          "label": "Objekte",
           "kind": "ref",
           "required": false,
           "ref": [
-            "media"
+            "object"
           ]
         },
         "published": {
@@ -305,57 +335,78 @@ export const MODEL = {
         }
       }
     },
-    "media": {
-      "class": "media",
-      "label": "Medium",
-      "dir": "media",
-      "id": "media",
+    "object": {
+      "class": "object",
+      "label": "Objekt",
+      "dir": "objects",
+      "id": "object",
       "subtypes": {
         "photo": "Foto",
         "drawing": "Zeichnung",
-        "document": "Dokument",
-        "audio": "Audio",
-        "video": "Video"
+        "print": "Druckgrafik",
+        "plan": "Karte / Plan",
+        "letter": "Brief",
+        "note": "Notiz",
+        "protocol": "Protokoll",
+        "brochure": "Broschüre",
+        "album": "Album",
+        "collection": "Sammlung"
       },
       "fields": {
+        "kind": {
+          "label": "Typ",
+          "kind": "choice",
+          "required": true,
+          "options": {
+            "image": "Bild",
+            "document": "Dokument",
+            "audio": "Audio",
+            "video": "Video",
+            "group": "Gruppe"
+          }
+        },
         "title": {
           "label": "Titel",
           "kind": "string",
-          "required": false
+          "required": true
         },
-        "alt": {
-          "label": "Alternativtext",
+        "description": {
+          "label": "Beschreibung",
           "kind": "string",
           "required": false,
-          "description": "What is to be seen, for people who cannot see it. To be required for photo and drawing (rule not yet written)."
-        },
-        "caption": {
-          "label": "Bildunterschrift",
-          "kind": "string",
-          "required": false
-        },
-        "creator": {
-          "label": "Urheber",
-          "kind": "ref",
-          "required": false,
-          "ref": [
-            "person",
-            "organization"
-          ]
-        },
-        "license": {
-          "label": "Lizenz",
-          "kind": "string",
-          "required": false,
-          "description": "To be worked out (a list of values). Free text for now."
+          "multiline": true
         },
         "date": {
           "label": "Datum",
-          "kind": "date",
+          "kind": "string",
           "required": false
         },
-        "depicts": {
-          "label": "Zeigt",
+        "origin": {
+          "label": "Herkunft",
+          "kind": "group",
+          "required": false,
+          "description": "Who made it, and where. The place only when it does not follow from who made it (a letter from Lenzen, written by somebody who lives in Hamburg).",
+          "parts": {
+            "by": {
+              "label": "Von",
+              "kind": "ref",
+              "ref": [
+                "person",
+                "organization"
+              ]
+            },
+            "place": {
+              "label": "Ort",
+              "kind": "ref",
+              "ref": [
+                "place"
+              ],
+              "single": true
+            }
+          }
+        },
+        "about": {
+          "label": "Bezüge",
           "kind": "ref",
           "required": false,
           "ref": [
@@ -364,13 +415,186 @@ export const MODEL = {
             "place",
             "event",
             "thing"
+          ],
+          "description": "What the object shows or mentions. Any entity; the type of the entry says what it is. The same field as on contents."
+        },
+        "original": {
+          "label": "Original",
+          "kind": "group",
+          "required": false,
+          "description": "Where the original is, if there is one (there is only one).",
+          "parts": {
+            "holder": {
+              "label": "Aufbewahrung",
+              "kind": "ref",
+              "ref": [
+                "person",
+                "organization"
+              ],
+              "single": true
+            },
+            "reference": {
+              "label": "Signatur",
+              "kind": "string"
+            },
+            "uri": {
+              "label": "Link",
+              "kind": "string"
+            },
+            "note": {
+              "label": "Notiz",
+              "kind": "string"
+            }
+          }
+        },
+        "owner": {
+          "label": "Eigentümer",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "person",
+            "organization"
+          ],
+          "single": true,
+          "description": "Only when the original belongs to somebody other than its holder (loan, deposit)."
+        },
+        "parents": {
+          "label": "Gehört zu",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "object"
+          ],
+          "description": "The groups this object is in (album, collection); several are possible. Only this side is written. A group can be in groups, but not in itself, not through others."
+        },
+        "recipient": {
+          "label": "Empfänger",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "person",
+            "organization"
+          ],
+          "applies": [
+            "document"
           ]
+        },
+        "language": {
+          "label": "Sprache",
+          "kind": "string",
+          "required": false,
+          "applies": [
+            "document"
+          ]
+        },
+        "alt": {
+          "label": "Alternativtext",
+          "kind": "string",
+          "required": false,
+          "description": "What is to be seen, for people who cannot see it. To be required for images (rule not yet written).",
+          "applies": [
+            "image"
+          ]
+        },
+        "caption": {
+          "label": "Bildunterschrift",
+          "kind": "string",
+          "required": false
+        },
+        "license": {
+          "label": "Lizenz",
+          "kind": "string",
+          "required": false,
+          "description": "To be worked out (a list of values). Free text for now."
+        },
+        "notes": {
+          "label": "Notizen",
+          "kind": "string",
+          "required": false,
+          "description": "Internal notes of the person capturing the object.",
+          "multiline": true
+        },
+        "storage": {
+          "label": "Ablage",
+          "kind": "choice",
+          "required": false,
+          "options": {
+            "local": "Hier",
+            "external": "Anderswo"
+          },
+          "description": "local (default): the content is in our object store, described by files. external: it is somewhere else, described by external; files then only accompany it (thumbnail, screenshot)."
+        },
+        "external": {
+          "label": "Externe Fundstelle",
+          "kind": "other",
+          "required": false,
+          "description": "One entry per place, when storage is external."
         },
         "files": {
           "label": "Dateien",
           "kind": "files",
-          "required": true,
-          "description": "As in the archive. One or more files, each with a role; derived files are variants of a file."
+          "required": false,
+          "description": "Zero or more, each with a role; derived files (previews, OCR text, transcripts) are variants of a file."
+        }
+      },
+      "kinds": {
+        "image": {
+          "label": "Bild",
+          "subtypes": {
+            "photo": "Foto",
+            "drawing": "Zeichnung",
+            "print": "Druckgrafik",
+            "plan": "Karte / Plan"
+          },
+          "files": {
+            "roles": [
+              "main"
+            ],
+            "max": 1
+          }
+        },
+        "document": {
+          "label": "Dokument",
+          "subtypes": {
+            "letter": "Brief",
+            "note": "Notiz",
+            "protocol": "Protokoll",
+            "brochure": "Broschüre"
+          },
+          "files": {
+            "roles": [
+              "page"
+            ],
+            "numbered": true
+          }
+        },
+        "audio": {
+          "label": "Audio",
+          "subtypes": {},
+          "files": {
+            "roles": [
+              "main"
+            ]
+          }
+        },
+        "video": {
+          "label": "Video",
+          "subtypes": {},
+          "files": {
+            "roles": [
+              "main"
+            ]
+          }
+        },
+        "group": {
+          "label": "Gruppe",
+          "subtypes": {
+            "album": "Album",
+            "collection": "Sammlung"
+          },
+          "files": {
+            "max": 0
+          }
         }
       }
     }

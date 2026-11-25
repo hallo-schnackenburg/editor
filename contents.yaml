@@ -3,11 +3,12 @@
 # core/src/model.generated.ts (the app, the worker and the checks read those). Change the model here, then generate.
 #
 # classes     three kinds of entries. An entity is something real (a person, a place, ...). A content is a text,
-#             about entities or not. A media entry describes files that live in the object store.
+#             about entities or not. An object is a piece of the archive (a photo, a letter, a recording, an album): the
+#             YAML file describes it; its files live in the object store, somewhere else, or it has none (a group).
 # types       the types of entries. `class` says which kind, `dir` where the files of the type are kept (the
 #             folder below the class folder is free for contents, fixed for the others), `id` the rule for the id.
 # text_roles  the purposes a text of a content can be written for; see below.
-# defs        building blocks (the file entries of media, copied from the archive).
+# defs        building blocks (the file entries of objects, copied from the archive).
 #
 # A place can have a `kind` and a `parent` (one id, a string): locality > street or square > building, and a locality may lie in
 # another one (Gummern in Schnackenburg). The parent is a relation between entries, not the folder structure: the folders below
@@ -15,12 +16,12 @@
 #
 # Open, on purpose: licenses (a list, later), the fields of the entities beyond the bare minimum, which types the
 # reference fields accept (shown as `ref:` with a first guess), collections and tags, `social` in more detail.
-# Not taken over from the archive: `external` (content stored elsewhere), `parents` as groups, ULIDs.
+# What an object is, and how it relates to the archive's model, is in doc/modell.md.
 
 schema:
   id: https://example.invalid/schema/contents.schema.json
   title: Contents entry
-  description: "One entry of the contents database (an entity, a content or a media entry). One YAML file per entry."
+  description: "One entry of the contents database (an entity, a content or an object). One YAML file per entry."
 
 classes:
   entity:
@@ -31,10 +32,10 @@ classes:
     label: Inhalt
     description: "A text, about entities or not. The type stays the same for all contents for now."
     dir: contents
-  media:
-    label: Medium
-    description: "Metadata of files kept elsewhere (images, video, audio, scans), not the files themselves."
-    dir: media
+  object:
+    label: Objekt
+    description: "One piece of the archive: a photo, a letter, a recording, an album. Described by its YAML file; the content is kept in the object store, held somewhere else, or it is a group of objects."
+    dir: objects
 
 ids:
   path:
@@ -43,9 +44,9 @@ ids:
   slug:
     description: "Readable, immutable, ASCII. Umlauts and ß are written ae, oe, ue, ss. A clash is resolved by a number at the end (erika-mustermann-2)."
     pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
-  media:
-    description: "A readable slug, then a short random suffix of five characters. The file is media/<first character of the id>/<id>.yaml."
-    pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{5}$
+  object:
+    description: "A ULID in lower case, made with the draft. Stable and meaningless, never derived from names or call numbers. The file is objects/<last two characters of the id>/<id>.yaml (the beginning of a ULID is the time, the end is random)."
+    pattern: ^[0-7][0-9a-hjkmnp-tv-z]{25}$
 
 types:
   person:
@@ -62,6 +63,10 @@ types:
         label: Beschreibung
         multiline: true
         schema: { type: string }
+      stub:
+        label: Unvollständig
+        description: "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        schema: { type: boolean }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -82,6 +87,10 @@ types:
       places:
         label: Orte
         ref: [place]
+      stub:
+        label: Unvollständig
+        description: "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        schema: { type: boolean }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -121,6 +130,10 @@ types:
       address:
         label: Adresse
         schema: { type: string }
+      stub:
+        label: Unvollständig
+        description: "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        schema: { type: boolean }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -160,6 +173,10 @@ types:
       places:
         label: Orte
         ref: [place]
+      stub:
+        label: Unvollständig
+        description: "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        schema: { type: boolean }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -184,6 +201,10 @@ types:
       owners:
         label: Gehört zu
         ref: [person, organization]
+      stub:
+        label: Unvollständig
+        description: "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+        schema: { type: boolean }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -205,9 +226,9 @@ types:
         label: Handelt von
         description: "Any entity. The type of the entry it points to says what it is."
         ref: [person, organization, place, event, thing]
-      media:
-        label: Medien
-        ref: [media]
+      objects:
+        label: Objekte
+        ref: [object]
       published:
         label: Veröffentlicht
         schema: { type: string, format: date }
@@ -217,48 +238,129 @@ types:
         description: "One Markdown text per role, at least one. See text_roles."
         schema: { $ref: '#/$defs/text' }
 
-  media:
-    class: media
-    label: Medium
-    dir: media
-    id: media
-    subtypes:
-      photo: Foto
-      drawing: Zeichnung
-      document: Dokument
-      audio: Audio
-      video: Video
+  object:
+    class: object
+    label: Objekt
+    dir: objects
+    id: object
+    # The type of an object (the `kind`; `type` is taken by the entry type) decides which files and fields it may have.
+    # files: roles the files may have, `numbered` (each file has a `num`, unique), `min` and `max` for their count.
+    # Without files: a group, or content kept elsewhere. The minimum is not enforced yet (there is no upload).
+    kinds:
+      image:
+        label: Bild
+        subtypes: { photo: Foto, drawing: Zeichnung, print: Druckgrafik, plan: Karte / Plan }
+        files: { roles: [main], max: 1 }
+      document:
+        label: Dokument
+        subtypes: { letter: Brief, note: Notiz, protocol: Protokoll, brochure: Broschüre }
+        files: { roles: [page], numbered: true }
+      audio:
+        label: Audio
+        subtypes: {}
+        files: { roles: [main] }
+      video:
+        label: Video
+        subtypes: {}
+        files: { roles: [main] }
+      group:
+        label: Gruppe
+        subtypes: { album: Album, collection: Sammlung }
+        files: { max: 0 }
     fields:
+      kind:
+        label: Typ
+        required: true
+        schema: { enum: [image, document, audio, video, group] }
+        options: { image: Bild, document: Dokument, audio: Audio, video: Video, group: Gruppe }
       title:
         label: Titel
+        required: true
+        schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
         schema: { type: string }
+      date:
+        label: Datum
+        schema: { $ref: '#/$defs/edtf' }
+      origin:
+        label: Herkunft
+        description: "Who made it, and where. The place only when it does not follow from who made it (a letter from Lenzen, written by somebody who lives in Hamburg)."
+        schema:
+          type: object
+          minProperties: 1
+          properties:
+            by: { label: Von, ref: [person, organization] }
+            place: { label: Ort, ref: [place], single: true }
+          additionalProperties: false
+      about:
+        label: Bezüge
+        description: "What the object shows or mentions. Any entity; the type of the entry says what it is. The same field as on contents."
+        ref: [person, organization, place, event, thing]
+      original:
+        label: Original
+        description: "Where the original is, if there is one (there is only one)."
+        schema:
+          type: object
+          minProperties: 1
+          properties:
+            holder: { label: Aufbewahrung, ref: [person, organization], single: true }
+            reference: { label: Signatur, type: string, minLength: 1 }
+            uri: { label: Link, type: string, format: uri }
+            note: { label: Notiz, type: string, minLength: 1 }
+          additionalProperties: false
+      owner:
+        label: Eigentümer
+        description: "Only when the original belongs to somebody other than its holder (loan, deposit)."
+        ref: [person, organization]
+        single: true
+      parents:
+        label: Gehört zu
+        description: "The groups this object is in (album, collection); several are possible. Only this side is written. A group can be in groups, but not in itself, not through others."
+        ref: [object]
+      recipient:
+        label: Empfänger
+        applies: [document]
+        ref: [person, organization]
+      language:
+        label: Sprache
+        applies: [document]
+        schema: { type: string, pattern: '^[a-z]{2,3}$' }
       alt:
         label: Alternativtext
-        description: "What is to be seen, for people who cannot see it. To be required for photo and drawing (rule not yet written)."
+        description: "What is to be seen, for people who cannot see it. To be required for images (rule not yet written)."
+        applies: [image]
         schema: { type: string, minLength: 1 }
       caption:
         label: Bildunterschrift
         schema: { type: string }
-      creator:
-        label: Urheber
-        ref: [person, organization]
       license:
         label: Lizenz
         description: "To be worked out (a list of values). Free text for now."
         schema: { type: string }
-      date:
-        label: Datum
-        schema: { type: string, format: date }
-      depicts:
-        label: Zeigt
-        ref: [person, organization, place, event, thing]
-      files:
-        label: Dateien
-        required: true
-        description: "As in the archive. One or more files, each with a role; derived files are variants of a file."
+      notes:
+        label: Notizen
+        description: "Internal notes of the person capturing the object."
+        multiline: true
+        schema: { type: string }
+      storage:
+        label: Ablage
+        description: "local (default): the content is in our object store, described by files. external: it is somewhere else, described by external; files then only accompany it (thumbnail, screenshot)."
+        schema: { enum: [local, external] }
+        options: { local: Hier, external: Anderswo }
+      external:
+        label: Externe Fundstelle
+        description: "One entry per place, when storage is external."
         schema:
           type: array
           minItems: 1
+          items: { $ref: '#/$defs/external_entry' }
+      files:
+        label: Dateien
+        description: "Zero or more, each with a role; derived files (previews, OCR text, transcripts) are variants of a file."
+        schema:
+          type: array
           items: { $ref: '#/$defs/file' }
 
 # The texts of a content. The key is the purpose, not the length. A client asks for a role; if the role is missing, the
@@ -293,6 +395,22 @@ text_roles:
     fallback: [body]
 
 defs:
+  edtf:
+    description: "EDTF date: 1963, 1963-07, 1963-07-14, 196X, 1963?, 1963~, or an interval like 1960/1969. Validated by form only."
+    type: string
+    pattern: ^(?:\d{4}|\d{3}X|\d{2}XX)(?:-(?:\d{2}|XX)(?:-(?:\d{2}|XX))?)?[?~%]?(?:/(?:\d{4}|\d{3}X|\d{2}XX)(?:-(?:\d{2}|XX)(?:-(?:\d{2}|XX))?)?[?~%]?)?$
+  external_entry:
+    description: "One place outside of our store where the content can be found. Everything is optional, but an entry says at least something."
+    type: object
+    minProperties: 1
+    properties:
+      type: { enum: [archive, platform, website] }
+      site: { type: string, minLength: 1, description: 'Name of the archive or platform, e.g. Arcinsys, YouTube. Text, not an entity.' }
+      uri: { type: string, pattern: '^https?://\S+$' }
+      reference: { type: string, minLength: 1, description: 'Call number or id at that place.' }
+      note: { type: string, minLength: 1 }
+      retrieved: { type: string, format: date, description: 'The day somebody last saw the content there.' }
+    additionalProperties: false
   when:
     description: "A date (2026-04-04) or a date with the time (2026-04-04T19:00), local time."
     type: string
@@ -333,7 +451,7 @@ defs:
     type: string
     pattern: ^[0-9a-f]{64}$
   file:
-    description: "A file in the object store (copied from the archive)."
+    description: "A file in the object store (copied from the archive). Its role depends on the type of the object (see kinds)."
     type: object
     required: [role, path, sha256, mime, bytes]
     properties:

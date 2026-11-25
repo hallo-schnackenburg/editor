@@ -39,7 +39,7 @@ describe('what the assistant is told', () => {
     expect(first.entry!.text).toContain('Erika M.')
     expect(first.history).toEqual([])
     expect(first.index).toContainEqual({ id: 'feuerwehrhaus', type: 'place', name: 'Feuerwehrhaus Schnackenburg' })
-    // only entities: no contents, no media
+    // only entities: no contents, no objects
     expect(first.index.every((e) => ['person', 'organization', 'place', 'event', 'thing'].includes(e.type))).toBe(true)
     expect(first.index.some((e) => e.id === 'osterfeuer-tradition')).toBe(false)
     expect(second.history).toEqual([{ role: 'user', text: 'Hi' }, { role: 'assistant', text: 'Hallo!' }])
@@ -207,6 +207,13 @@ describe('making an entry', () => {
     expect(ws.openForm).toBe(entry.path)
     expect(ws.dirty.map((e) => e.path)).toEqual([entry.path])
     expect(texts(ws)).toEqual(['user: Lege die Alte Fähre an', 'status: Ort „Alte Fähre“ angelegt.', 'status: Beschreibung geändert.', 'status: Typ geändert.'])
+  })
+
+  it('marks an entity that is made from a name only as incomplete (a stub), and one with a description not', async () => {
+    const ws = await started(new Scripted([{ tool: 'create_entry', type: 'person', name: 'Max Ketterer' }, { tool: 'create_entry', type: 'place', name: 'Leipzig', fields: { description: 'Eine Stadt.' } }]))
+    await ws.send('Lege beide an')
+    expect(ws.entries.find((e) => e.path === 'entities/people/max-ketterer.yaml')!.data).toMatchObject({ name: 'Max Ketterer', stub: true })
+    expect(ws.entries.find((e) => e.path === 'entities/places/leipzig.yaml')!.data?.stub).toBeUndefined()
   })
 
   it('numbers an id that is in use, and says when it cannot (a content without a topic)', async () => {

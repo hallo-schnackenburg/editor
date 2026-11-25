@@ -15,11 +15,11 @@ function walk(dir: string): string[] {
   })
 }
 
-const files: RepoFile[] = ['entities', 'contents', 'media'].flatMap((top) => {
+const files: RepoFile[] = ['entities', 'contents', 'objects'].flatMap((top) => {
   try {
     return walk(join(root, top)).map((file) => ({ path: relative(root, file).split('\\').join('/'), text: readFileSync(file, 'utf8') }))
   } catch {
-    return [] // a repository without media (yet)
+    return [] // a repository without objects (yet)
   }
 })
 

@@ -53,7 +53,7 @@ describe('groups', () => {
       ['Ort', ['Festplatz am Elbdeich', 'Feuerwehrhaus Schnackenburg']],
       ['Ereignis', ['Osterfeuer in Schnackenburg']],
       ['Inhalt', ['Das Osterfeuer am Elbdeich']],
-      ['Medium', ['Osterfeuer am Deich']],
+      ['Objekt', ['Osterfeuer am Deich']],
     ])
     expect(groups(all, 'feuerwehr').map((g) => g.label)).toEqual(['Organisation', 'Ort'])
   })
@@ -117,8 +117,10 @@ describe('newEntry', () => {
     expect(newEntry('person', 'Erika', '', undefined, { parent: 'x' }).text).not.toContain('parent')
   })
 
-  it('makes media ids with a random end, and refuses a name that has no letter', () => {
-    expect(newEntry('media', 'Kirchturm', '', (b) => b.fill(0)).path).toBe('media/k/kirchturm-aaaaa.yaml')
+  it('makes object ids that are ULIDs, with the type, and refuses a name that has no letter', () => {
+    const photo = newEntry('object', 'Kirchturm', '', (b) => b.fill(0), { kind: 'image' })
+    expect(photo.path).toMatch(/^objects\/00\/[0-7][0-9a-hjkmnp-tv-z]{9}0{16}\.yaml$/)
+    expect(photo.text).toContain('type: object\ntitle: "Kirchturm"\nkind: image\n')
     expect(() => newEntry('person', '???')).toThrow(/keine gültige ID/)
   })
 })
@@ -134,8 +136,8 @@ describe('where a new entry is made (the plus in the tree)', () => {
     expect(newContextFor('entities/places')).toEqual({ type: 'place', folder: '', kind: 'locality' }) // the first places are localities
     expect(newContextFor('contents')).toEqual({ type: 'content', folder: '' })
     expect(newContextFor('contents/geschichte')).toEqual({ type: 'content', folder: 'geschichte' })
-    expect(newContextFor('media')).toEqual({ type: 'media', folder: '' })
-    expect(newContextFor('media/k')).toBeUndefined() // the letters are made by the app
+    expect(newContextFor('objects')).toEqual({ type: 'object', folder: '' })
+    expect(newContextFor('objects/ae')).toBeUndefined() // the folders are made by the app
     expect(newContextFor('entities/places/schnackenburg/elbstrasse')).toEqual({ type: 'place', folder: 'schnackenburg/elbstrasse' })
   })
 
@@ -232,5 +234,35 @@ describe('showing dates', () => {
     expect(nextDates({ rrule: undefined, start: '2020-01-01' } as never)).toEqual([])
     expect(nextDates({ rrule: 'FREQ=YEARLY', start: undefined } as never)).toEqual([])
     expect(nextDates({} as never)).toEqual([])
+  })
+})
+
+describe('objects in the form', () => {
+  const photo = () => makeEntry('objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ae\ntype: object\nkind: image\ntitle: Foto\n', 'sha')
+
+  it('sets a group field from its parts, and takes empty parts and the whole field out', () => {
+    const entry = photo()
+    const text = setValue(entry, 'origin', 'group', { by: ['erika-mustermann'], place: '' })
+    expect(text).toContain('origin:\n  by:\n    - erika-mustermann\n')
+    expect(text).not.toContain('place')
+    expect(setValue(withText(entry, text), 'origin', 'group', { by: [], place: '' })).not.toContain('origin')
+  })
+
+  it('offers as parents only groups that do not lie in the object itself', () => {
+    const group = (id: string, parents?: string[]) => makeEntry(`objects/xx/${id}.yaml`, `id: ${id}\ntype: object\nkind: group\ntitle: ${id}\n${parents ? `parents: [${parents.join(', ')}]\n` : ''}`, 'sha')
+    const outer = group('outer')
+    const inner = group('inner', ['outer'])
+    const other = group('other')
+    const single = makeEntry('objects/xx/single.yaml', 'id: single\ntype: object\nkind: image\ntitle: Foto\n', 'sha')
+    expect(excludedTargets(outer, 'parents', [outer, inner, other, single]).sort()).toEqual(['inner', 'outer', 'single'])
+  })
+
+  it('finds a group that lies in itself, and a parent that is no group', () => {
+    const a = makeEntry('objects/xx/a.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1aa\ntype: object\nkind: group\ntitle: A\nparents: [01kb4z8m3q7xv2n5r6t9c0d1ab]\n', 'sha')
+    const b = makeEntry('objects/xx/b.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ab\ntype: object\nkind: group\ntitle: B\nparents: [01kb4z8m3q7xv2n5r6t9c0d1aa]\n', 'sha')
+    expect(issuesOf(a, [a, b]).map((i) => i.message)).toContain('an object cannot be in itself or in a group that is in it')
+    const photo = makeEntry('objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ae\ntype: object\nkind: image\ntitle: F\nparents: [01kb4z8m3q7xv2n5r6t9c0d1ac]\n', 'sha')
+    const notGroup = makeEntry('objects/ac/01kb4z8m3q7xv2n5r6t9c0d1ac.yaml', 'id: 01kb4z8m3q7xv2n5r6t9c0d1ac\ntype: object\nkind: image\ntitle: G\n', 'sha')
+    expect(issuesOf(photo, [photo, notGroup]).map((i) => i.message)).toEqual(['"01kb4z8m3q7xv2n5r6t9c0d1ac" is not a group'])
   })
 })

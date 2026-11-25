@@ -26,7 +26,7 @@ const MAX_COMMIT = 300
 const message = (given: unknown, fallback: string) => (typeof given === 'string' && given.trim() ? given.trim().slice(0, 200) : fallback)
 
 function entryPath(value: unknown): string {
-  if (typeof value !== 'string' || !ENTRY_PATH.test(value)) throw new Refused('Not the path of an entry (entities/…, contents/… or media/…, ending in .yaml).')
+  if (typeof value !== 'string' || !ENTRY_PATH.test(value)) throw new Refused('Not the path of an entry (entities/…, contents/… or objects/…, ending in .yaml).')
   return value
 }
 

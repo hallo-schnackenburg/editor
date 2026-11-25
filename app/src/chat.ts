@@ -7,7 +7,7 @@
 import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@contents-editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
-import { idOf, nameFieldOf, planRename, titleOf, typeOf, withText, type Entry } from './logic.js'
+import { idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withText, type Entry } from './logic.js'
 import type { Workspace } from './workspace.svelte.js'
 
 /** An action that waits for the person's "yes". `run` returns what to tell afterwards. */
@@ -306,6 +306,9 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         show = path
         note(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
         for (const [field, value] of Object.entries(call.fields ?? {})) patch(path, field, value, undefined, true)
+        // An entity the chat makes from a name only is a stub, to be completed: marked, so that it can be found later.
+        const made = ws.entries.find((e) => e.path === path)
+        if (made && MODEL.types[call.type].class === 'entity' && 'stub' in MODEL.types[call.type].fields && !('description' in (call.fields ?? {}))) ws.edit(setValue(made, 'stub', 'boolean', true))
         return undefined
       }
       case 'rename_draft':

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { MODEL, type TextRole } from '@contents-editor/core'
+  import { MODEL, setField, type TextRole } from '@contents-editor/core'
   import { excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
   import RefField from './RefField.svelte'
@@ -28,6 +28,32 @@
   const editable = $derived(ws.editable)
 
   const data = (name: string): any => entry.data?.[name]
+  // What a kind of object decides: the fields that apply (`applies`), and the subtypes it has.
+  type Part = { label: string; kind: string; ref?: readonly string[]; single?: boolean }
+  const partsOf = (field: unknown) => Object.entries((field as { parts?: Record<string, Part> }).parts ?? {})
+  const applies = (field: unknown) => {
+    const kinds = (field as { applies?: readonly string[] }).applies
+    return !kinds || kinds.includes(String(data('kind')))
+  }
+  const kinds = $derived((model as { kinds?: Record<string, { label: string; subtypes: Record<string, string> }> } | undefined)?.kinds)
+  const subtypes = $derived(kinds?.[String(data('kind'))]?.subtypes ?? {})
+  // The subtype belongs to the kind: when the kind changes, a subtype of the old one goes.
+  function setKind(value: string) {
+    const first = setField(entry.text, 'kind', value || undefined, entry.data?.kind)
+    if (!first.ok) return
+    let text = first.text
+    const old = entry.data?.subtype
+    if (typeof old === 'string' && !(old in (kinds?.[value]?.subtypes ?? {}))) {
+      const second = setField(text, 'subtype', undefined, old)
+      if (second.ok) text = second.text
+    }
+    ws.edit(text)
+  }
+  function setSubtype(value: string) {
+    const result = setField(entry.text, 'subtype', value || undefined, entry.data?.subtype)
+    if (result.ok) ws.edit(result.text)
+  }
+  const setPart = (name: string, part: string, value: unknown) => set(name, 'group', { ...(data(name) ?? {}), [part]: value })
   const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
   // An event that is not recurring has neither a schedule nor a rule: they go when "wiederkehrend" is switched off.
   function setFlag(name: string, on: boolean) {
@@ -110,7 +136,7 @@
       {/if}
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
-        {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true)}
+        {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true) && applies(field)}
         <div class="field" class:bad={forField(name).length > 0}>
           {#if kind !== 'text'}
             <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}</label>
@@ -120,7 +146,7 @@
           {:else if kind === 'string'}
             <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
           {:else if kind === 'choice'}
-            <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => set(name, 'string', event.currentTarget.value)}>
+            <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => (name === 'kind' && kinds ? setKind(event.currentTarget.value) : set(name, 'string', event.currentTarget.value))}>
               <option value="">–</option>
               {#each Object.entries((field as { options?: Record<string, string> }).options ?? {}) as [value, label]}<option {value}>{label}</option>{/each}
             </select>
@@ -145,6 +171,21 @@
             <RuleField value={data(name)} onchange={(rule) => set(name, kind, rule)} />
           {:else if kind === 'text'}
             <TextRoles value={data(name) ?? {}} onchange={(role: TextRole, text: string) => ws.edit(setRole(entry, role, text))} />
+          {:else if kind === 'group'}
+            <div class="parts">
+              {#each partsOf(field) as [part, spec] (part)}
+                <div class="part">
+                  <label for={`f-${name}-${part}`}>{spec.label}</label>
+                  {#if spec.kind === 'ref' && spec.single}
+                    <RefField value={data(name)?.[part] ? [data(name)[part]] : []} targets={spec.ref ?? []} max={1} entries={ws.entries} exclude={[]} onchange={(ids) => setPart(name, part, ids[0] ?? '')} />
+                  {:else if spec.kind === 'ref'}
+                    <RefField value={data(name)?.[part] ?? []} targets={spec.ref ?? []} entries={ws.entries} exclude={[]} onchange={(ids) => setPart(name, part, ids)} />
+                  {:else}
+                    <input id={`f-${name}-${part}`} type="text" value={data(name)?.[part] ?? ''} oninput={(event) => setPart(name, part, event.currentTarget.value)} />
+                  {/if}
+                </div>
+              {/each}
+            </div>
           {:else if kind === 'files'}
             <ul class="files">
               {#each data(name) ?? [] as file}
@@ -157,6 +198,16 @@
           {#each forField(name) as issue}<div class="issue">{issueText(issue.message)}</div>{/each}
           {#if nameError && name === labelField && type !== 'place'}<div class="issue">{nameError}</div>{/if}
         </div>
+        {#if name === 'kind' && Object.keys(subtypes).length > 0}
+          <div class="field" class:bad={all.some((i) => i.path === '/subtype')}>
+            <label for="f-subtype">Untertyp</label>
+            <select id="f-subtype" value={data('subtype') ?? ''} onchange={(event) => setSubtype(event.currentTarget.value)}>
+              <option value="">–</option>
+              {#each Object.entries(subtypes) as [value, label]}<option {value}>{label}</option>{/each}
+            </select>
+            {#each all.filter((i) => i.path === '/subtype') as issue}<div class="issue">{issueText(issue.message)}</div>{/each}
+          </div>
+        {/if}
         {/if}
       {/each}
     </fieldset>
@@ -190,6 +241,8 @@
   .issue { color: var(--bad); font-size: 13px; margin-top: 3px; }
   .field.bad input[type='text'], .field.bad input[type='date'], .field.bad select { border-color: var(--bad); }
   .files { margin: 0; padding-left: 18px; }
+  .parts { display: flex; flex-direction: column; gap: 10px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .part > label { display: block; font-weight: 500; margin-bottom: 3px; }
   .yaml { min-height: 28rem; }
   input[type='checkbox'] { width: auto; }
   select { width: auto; min-width: 12rem; }

@@ -7,7 +7,7 @@
 //   POST /chat                   passes a chat message to the model and returns tool calls; the Anthropic key stays here (chat.ts).
 //   GET /live                    a WebSocket on which the browser hears that something changed (hub.ts).
 //
-// NOT YET THERE: media upload (S3), a limit per person for the chat (until then the spending cap is set in the Anthropic workspace).
+// NOT YET THERE: upload of files (S3), a limit per person for the chat (until then the spending cap is set in the Anthropic workspace).
 
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
 import { handleChat, type ChatEnv } from './chat.js'

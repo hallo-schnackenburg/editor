@@ -16,25 +16,28 @@
   let folder = $state(start.folder)
   let parent = $state(start.parent ?? '')
   let kind = $state(start.kind ?? '')
+  // The type of an object (image, document, ...): it decides the files and fields, so it is chosen first.
+  const objectKinds = MODEL.types.object.fields.kind.options as Record<string, string>
+  let objectKind = $state(Object.keys(objectKinds)[0])
   let description = $state('')
   let links = $state<{ label: string; url: string }[]>([])
   let problem = $state<string>()
 
   const model = $derived(MODEL.types[type])
   const isContent = $derived(model.class === 'content')
-  const isMedia = $derived(model.class === 'media')
+  const isObject = $derived(model.class === 'object')
   const isPlace = $derived(type === 'place')
   // The fields every entity has beside its name, so that an entry starts with them.
-  const hasDescription = $derived(!isContent && !isMedia && 'description' in model.fields)
-  const hasLinks = $derived(!isContent && !isMedia && 'links' in model.fields)
+  const hasDescription = $derived(!isContent && !isObject && 'description' in model.fields)
+  const hasLinks = $derived(!isContent && !isObject && 'links' in model.fields)
 
   const places = $derived(ws.entries.filter((e) => typeOf(e) === 'place').sort((a, b) => titleOf(a).localeCompare(titleOf(b), 'de')))
   const kinds = MODEL.types.place.fields.kind.options as Record<string, string>
   const kindOf = (id: string) => kinds[String(ws.entries.find((e) => idOf(e) === id)?.data?.kind)]
 
-  /** Where it will lie and what its id will be (not for media: their id ends in random characters). */
+  /** Where it will lie and what its id will be (not for objects: their id is a ULID). */
   const preview = $derived.by(() => {
-    if (!label.trim() || isMedia) return undefined
+    if (!label.trim() || isObject) return undefined
     try {
       return newEntry(type, label, folder, undefined, { taken: (id) => ws.entries.some((e) => idOf(e) === id) })
     } catch (error) {
@@ -46,7 +49,7 @@
     event.preventDefault()
     problem = undefined
     try {
-      ws.create(type, label, isMedia ? '' : folder, { parent: isPlace ? parent || undefined : undefined, kind: isPlace ? kind || undefined : undefined, numbered: true })
+      ws.create(type, label, isObject ? '' : folder, { parent: isPlace ? parent || undefined : undefined, kind: isObject ? objectKind : isPlace ? kind || undefined : undefined, numbered: true })
       if (hasDescription && description.trim()) ws.edit(setValue(ws.selected!, 'description', 'string', description.trim()))
       if (hasLinks && links.some((l) => l.label.trim() && l.url.trim())) ws.edit(setValue(ws.selected!, 'links', 'links', links))
       ondone(ws.selectedPath!)
@@ -71,10 +74,17 @@
 
 
   <label>
-    {isContent ? 'Titel' : 'Name'}
+    {isContent || isObject ? 'Titel' : 'Name'}
     <!-- svelte-ignore a11y_autofocus -->
     <input type="text" bind:value={label} autofocus required />
   </label>
+
+  {#if isObject}
+    <label>
+      Typ
+      <select bind:value={objectKind}>{#each Object.entries(objectKinds) as [value, name]}<option {value}>{name}</option>{/each}</select>
+    </label>
+  {/if}
 
   {#if isPlace}
     <label>

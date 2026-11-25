@@ -5,11 +5,15 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import type { ErrorObject } from 'ajv'
 import addFormats from 'ajv-formats'
 import schema from '../schema/entry.schema.json'
+import { MODEL } from './model.generated.js'
 import type { Issue } from './types.js'
 
 const ajv = new Ajv2020({ allErrors: true, strict: false })
 addFormats(ajv)
 const validate = ajv.compile(schema)
+
+/** The patterns of ids: a value that breaks one of them is a reference or an id that is not one. */
+const ID_PATTERNS = new Set<string>(Object.values(MODEL.ids).map((rule) => rule.pattern))
 
 const child = (path: string, key: string) => (path === '/' ? `/${key}` : `${path}/${key}`)
 
@@ -34,7 +38,8 @@ function toIssue(error: ErrorObject): Issue {
     case 'type':
       return { path, message: `must be ${params.type}` }
     case 'pattern':
-      return { path, message: path.endsWith('/id') || /\/\d+$/.test(path) ? 'not a valid id: lower-case letters, digits and single hyphens (an entity id may have folders: gummern/3)' : (error.message ?? 'invalid') }
+      if (params.pattern === MODEL.ids.object.pattern) return { path, message: 'not a valid id: a ULID in lower case (26 characters)' }
+      return { path, message: path.endsWith('/id') || /\/\d+$/.test(path) || ID_PATTERNS.has(String(params.pattern)) ? 'not a valid id: lower-case letters, digits and single hyphens (an entity id may have folders: gummern/3)' : (error.message ?? 'invalid') }
     default:
       return { path, message: error.message ?? 'invalid' }
   }

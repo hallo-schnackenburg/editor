@@ -54,7 +54,7 @@ describe('the changes', () => {
       ['new', 'entities/places/alte-faehre.yaml'],
       ['changed', 'contents/traditionen/osterfeuer-tradition.yaml'], // the references to the deleted entry are taken out
       ['changed', ERIKA],
-      ['changed', 'media/o/osterfeuer-am-deich-p3q8d.yaml'],
+      ['changed', 'objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml'],
       ['removed', 'entities/events/osterfeuer.yaml'],
     ])
     expect(ws.entries.some((e) => e.path === 'entities/events/osterfeuer.yaml')).toBe(false)

@@ -1,4 +1,4 @@
-// Makes a demo database of 500 entries (entities, contents, media) for trying the browsing UI.
+// Makes a demo database of 500 entries (entities, contents, objects) for trying the browsing UI.
 // Deterministic: the same run gives the same files. Usage: node scripts/generate-demo.mjs [outDir]
 // The people, clubs and texts are invented. The places are real: Schnackenburg with Gummern, Holtorf and Kapern, and the
 // street names of PLZ 29493 (not an official list; which street lies in which Ort is a guess except for a few).
@@ -173,48 +173,54 @@ const things = [
 ]
 for (const [id, name, description] of things) write(`entities/things/${id}.yaml`, { id, type: 'thing', name, description })
 
-// --- media --------------------------------------------------------------------------------------------------------
-const letters = 'abcdefghijklmnopqrstuvwxyz0123456789'
-const suffix = () => Array.from({ length: 5 }, () => letters[int(0, letters.length - 1)]).join('')
+// --- objects ------------------------------------------------------------------------------------------------------
+const CROCKFORD = '0123456789abcdefghjkmnpqrstvwxyz'
+/** A ULID in lower case: the time (a minute apart per object) and random characters from the seeded generator. */
+const ulid = (n) => {
+  let time = ''
+  for (let rest = 1_700_000_000_000 + n * 60_000, i = 0; i < 10; i++, rest = Math.floor(rest / 32)) time = CROCKFORD[rest % 32] + time
+  return time + Array.from({ length: 16 }, () => CROCKFORD[int(0, 31)]).join('')
+}
 const licenses = ['cc-by-4.0', 'cc-by-sa-4.0', 'cc0-1.0', 'alle-rechte-vorbehalten', 'gemeinfrei']
-const mediaKinds = [
-  ['photo', 'jpg', 'image/jpeg', 0.7],
-  ['drawing', 'png', 'image/png', 0.05],
-  ['document', 'pdf', 'application/pdf', 0.15],
-  ['audio', 'mp3', 'audio/mpeg', 0.05],
-  ['video', 'mp4', 'video/mp4', 0.05],
+const objectKinds = [
+  ['image', 'photo', 'jpg', 'image/jpeg', 0.7],
+  ['image', 'drawing', 'png', 'image/png', 0.05],
+  ['document', 'letter', 'pdf', 'application/pdf', 0.15],
+  ['audio', undefined, 'mp3', 'audio/mpeg', 0.05],
+  ['video', undefined, 'mp4', 'video/mp4', 0.05],
 ]
 const subjects = ['am Deich', 'im Abendlicht', 'beim Aufbau', 'von oben', 'im Winter', 'beim Umzug', 'bei Hochwasser', 'in den Siebzigern', 'nach der Restaurierung', 'bei der Einweihung']
-const media = []
+const objects = []
 const withSha = (text) => createHash('sha256').update(text).digest('hex')
-while (media.length < 80) {
+while (objects.length < 80) {
   const roll = rnd()
   let acc = 0
-  const [subtype, ext, mime] = mediaKinds.find((k) => (acc += k[3]) >= roll) ?? mediaKinds[0]
+  const [kind, subtype, ext, mime] = objectKinds.find((k) => (acc += k[4]) >= roll) ?? objectKinds[0]
   const shows = pick([...entities.filter((e) => e.type !== 'person'), ...people.slice(0, 10)])
   const title = `${shows.name} ${pick(subjects)}`
-  const id = `${slugify(title).slice(0, 48).replace(/-+$/, '')}-${suffix()}`
+  const id = ulid(objects.length)
   if (used.has(id)) continue
   used.add(id)
   const sha = withSha(id)
   const dir = `files/${sha.slice(0, 2)}/${sha.slice(2, 4)}/${sha}`
-  const file = { role: 'main', original_name: `${subtype === 'photo' ? 'IMG' : 'DOC'}_${int(1000, 9999)}.${ext}`, path: `${dir}/original.${ext}`, sha256: sha, mime, bytes: int(80_000, 9_000_000) }
-  if (subtype === 'photo' || subtype === 'drawing') {
+  const picture = kind === 'image'
+  const file = { role: kind === 'document' ? 'page' : 'main', ...(kind === 'document' ? { num: 1 } : {}), original_name: `${picture ? 'IMG' : 'DOC'}_${int(1000, 9999)}.${ext}`, path: `${dir}/original.${ext}`, sha256: sha, mime, bytes: int(80_000, 9_000_000) }
+  if (picture) {
     file.width = pick([4000, 6000, 3000])
     file.height = Math.round((file.width * 2) / 3)
     const psha = withSha(`${id}-preview`)
     file.variants = [{ kind: 'preview', path: `${dir}/preview-400.${psha.slice(0, 12)}.${ext}`, sha256: psha, mime, bytes: int(20_000, 60_000), width: 400, height: 267, generator: { name: 'sharp', version: '0.34.0' } }]
   }
-  const entry = { id, type: 'media', subtype, title }
-  if (subtype === 'photo' || subtype === 'drawing') entry.alt = `${shows.name} ${pick(subjects)}: ${pick(['mehrere Menschen im Vordergrund', 'ein weiter Blick über die Elbe', 'das Gebäude von der Straße aus', 'Fahnen und Girlanden'])}.`
+  const entry = { id, type: 'object', kind, ...(subtype ? { subtype } : {}), title }
+  if (picture) entry.alt = `${shows.name} ${pick(subjects)}: ${pick(['mehrere Menschen im Vordergrund', 'ein weiter Blick über die Elbe', 'das Gebäude von der Straße aus', 'Fahnen und Girlanden'])}.`
   if (chance(0.6)) entry.caption = `${title}, ${int(1950, 2026)}.`
-  if (chance(0.7)) entry.creator = [pick(people).id]
+  if (chance(0.7)) entry.origin = { by: [pick(people).id] }
   entry.license = pick(licenses)
   if (chance(0.8)) entry.date = `${int(1950, 2026)}-${String(int(1, 12)).padStart(2, '0')}-${String(int(1, 28)).padStart(2, '0')}`
-  entry.depicts = [shows.id, ...(chance(0.3) ? [pick(entities).id] : [])].filter((v, i, a) => a.indexOf(v) === i)
+  entry.about = [shows.id, ...(chance(0.3) ? [pick(entities).id] : [])].filter((v, i, a) => a.indexOf(v) === i)
   entry.files = [file]
-  media.push(entry)
-  write(`media/${id[0]}/${id}.yaml`, entry)
+  objects.push(entry)
+  write(`objects/${id.slice(-2)}/${id}.yaml`, entry)
 }
 
 // --- contents -----------------------------------------------------------------------------------------------------
@@ -247,7 +253,7 @@ for (const [topic, title] of Object.entries(topicTitles)) write(`contents/${topi
 const clip = (s, n) => (s.length <= n ? s : `${s.slice(0, n - 1).replace(/\s+\S*$/, '')}…`)
 const contents = []
 let attempts = 0
-while (contents.length < 500 - entities.length - media.length && attempts++ < 5000) {
+while (contents.length < 500 - entities.length - objects.length && attempts++ < 5000) {
   const topic = pick(topicsList)
   const village = pick(villages)
   const org = pick(organizations.filter((o) => o.name.endsWith(village)).concat(organizations.slice(0, 5)))
@@ -269,12 +275,12 @@ while (contents.length < 500 - entities.length - media.length && attempts++ < 50
   const entry = { id, type: 'content', title }
   if (chance(0.8)) entry.authors = [pick([...people, ...organizations]).id]
   if (about.length) entry.about = about
-  const related = media.filter((m) => m.depicts.some((d) => about.includes(d)))
-  if (related.length && chance(0.8)) entry.media = some(related, 2).map((m) => m.id)
+  const related = objects.filter((m) => m.about.some((d) => about.includes(d)))
+  if (related.length && chance(0.8)) entry.objects = some(related, 2).map((m) => m.id)
   if (chance(0.85)) entry.published = `${int(2022, 2026)}-${String(int(1, 12)).padStart(2, '0')}-${String(int(1, 28)).padStart(2, '0')}`
   entry.text = text
   contents.push(entry)
   write(`contents/${topic}/${id}.yaml`, entry)
 }
 
-console.log(`${out}: ${people.length} people, ${organizations.length} organizations, ${places.length} places, ${events.length} events, ${media.length} media, ${contents.length} contents = ${entities.length + media.length + contents.length}`)
+console.log(`${out}: ${people.length} people, ${organizations.length} organizations, ${places.length} places, ${events.length} events, ${objects.length} objects, ${contents.length} contents = ${entities.length + objects.length + contents.length}`)

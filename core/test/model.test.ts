@@ -15,23 +15,26 @@ describe('contents.yaml', () => {
   })
 
   it('lists the types and the text roles', () => {
-    expect(ENTRY_TYPES).toEqual(['person', 'organization', 'place', 'event', 'thing', 'content', 'media'])
+    expect(ENTRY_TYPES).toEqual(['person', 'organization', 'place', 'event', 'thing', 'content', 'object'])
     expect(TEXT_ROLES).toEqual(['body', 'teaser', 'summary', 'meta_description', 'social', 'print'])
-    expect(MODEL.types.media.subtypes).toHaveProperty('photo', 'Foto')
+    expect(MODEL.types.object.subtypes).toHaveProperty('photo', 'Foto')
+    expect(MODEL.types.object.kinds.group.files).toEqual({ max: 0 })
   })
 
   it('tells the editor how each field is shown', () => {
     const kinds = (type: keyof typeof MODEL.types) => Object.fromEntries(Object.entries(MODEL.types[type].fields).map(([name, f]) => [name, f.kind]))
-    expect(kinds('place')).toEqual({ name: 'string', description: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string', links: 'links' })
+    expect(kinds('place')).toEqual({ name: 'string', description: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string', stub: 'boolean', links: 'links' })
     // the description is written over several lines
     expect(MODEL.types.place.fields.description).toMatchObject({ multiline: true })
     for (const type of ['person', 'organization', 'place', 'event'] as const) expect(kinds(type)).toMatchObject({ description: 'string', links: 'links' })
     expect(MODEL.types.place.fields.kind.options).toMatchObject({ locality: 'Ort', building: 'Gebäude' })
     expect(MODEL.types.place.fields.parent).toMatchObject({ kind: 'ref', single: true })
-    expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', media: 'ref', published: 'date', text: 'text' })
+    expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', objects: 'ref', published: 'date', text: 'text' })
     expect(kinds('event')).toMatchObject({ recurring: 'boolean', organizers: 'ref' })
     expect(kinds('person')).toMatchObject({ links: 'links' })
-    expect(kinds('media')).toMatchObject({ files: 'files', alt: 'string', date: 'date' })
+    expect(kinds('object')).toMatchObject({ kind: 'choice', files: 'files', alt: 'string', date: 'string', origin: 'group', original: 'group', about: 'ref', external: 'other' })
+    expect(MODEL.types.object.fields.origin.parts).toMatchObject({ by: { kind: 'ref', ref: ['person', 'organization'] }, place: { kind: 'ref', single: true } })
+    expect(MODEL.types.object.fields.recipient).toMatchObject({ applies: ['document'] })
   })
 
   it('refuses options that do not name every value of the choice', () => {

@@ -3,6 +3,7 @@
 
 import { checkRefs, type Lookup } from './consistency.js'
 import { validateFolderYaml } from './folder.js'
+import { checkGroups } from './groups.js'
 import { checkParent } from './places.js'
 import { checkEvent } from './recurrence.js'
 import { ENTRY_PATH, FOLDER_PATH, checkPath } from './paths.js'
@@ -21,7 +22,7 @@ export interface RepoProblem {
 }
 
 /** Where entries may be kept; a file there that is not an entry file is a mistake. Everything else in the repository is not our business. */
-const OURS = /^(?:entities|contents|media)\//
+const OURS = /^(?:entities|contents|objects)\//
 
 /** The problems of the files of a repository, by file; none if all is well. */
 export function validateRepo(files: RepoFile[]): RepoProblem[] {
@@ -61,7 +62,7 @@ export function validateRepo(files: RepoFile[]): RepoProblem[] {
     else index.set(id, { type: String(data.type), path, data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkEvent(data)]) add(path, issue)
+  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkGroups(data, lookup), ...checkEvent(data)]) add(path, issue)
 
   return [...problems].map(([path, issues]) => ({ path, issues })).sort((a, b) => a.path.localeCompare(b.path))
 }

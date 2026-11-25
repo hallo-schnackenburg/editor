@@ -7,11 +7,11 @@
   interface Node { name: string; path: string; count: number; folders: Node[]; entries: Entry[]; entry?: Entry }
   type Item = { label: string; node: Node } | { label: string; entry: Entry }
 
-  // What the folders are called on screen (plural). The others, the topics of the contents and the letters of the media, are capitalized.
+  // What the folders are called on screen (plural). The others, the topics of the contents and the folders of the objects, are capitalized.
   const NAMES: Record<string, string> = {
     contents: 'Inhalte',
     entities: 'Entitäten',
-    media: 'Medien',
+    objects: 'Objekte',
     'entities/events': 'Ereignisse',
     'entities/organizations': 'Organisationen',
     'entities/people': 'Personen',
@@ -22,8 +22,8 @@
   const nameOf = (node: { name: string; path: string }) => NAMES[node.path] ?? folders[node.path] ?? node.name.charAt(0).toLocaleUpperCase('de') + node.name.slice(1)
   /** What a folder is called: the entry beside it names it, else its own name. */
   const labelOf = (node: Node) => (node.entry ? titleOf(node.entry) : nameOf(node))
-  /** Entities first, then contents, then media. */
-  const TOP = ['entities', 'contents', 'media']
+  /** Entities first, then contents, then objects. */
+  const TOP = ['entities', 'contents', 'objects']
 
   const needle = $derived(filter.trim().toLowerCase())
   const matches = (e: Entry) => !needle || titleOf(e).toLowerCase().includes(needle) || idOf(e).includes(needle)
@@ -45,7 +45,7 @@
       }
       node.entries.push(e)
     }
-    // The fixed folders (entities with its types, contents, media) and a topic with a name of its own (.folder.yaml) are there while they
+    // The fixed folders (entities with its types, contents, objects) and a topic with a name of its own (.folder.yaml) are there while they
     // are empty (not while searching: then they have nothing to find).
     if (!needle) {
       for (const path of [...Object.keys(NAMES), ...Object.keys(folders)]) {

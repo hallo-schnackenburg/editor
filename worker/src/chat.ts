@@ -148,8 +148,8 @@ export function parseChatRequest(data: unknown): ChatRequest {
   }
 }
 
-// The chat makes no media (they need files, which the browser handles).
-const CHAT_TYPES = ENTRY_TYPES.filter((type) => MODEL.types[type].class !== 'media')
+// The chat makes no objects (they need files, which the browser handles).
+const CHAT_TYPES = ENTRY_TYPES.filter((type) => MODEL.types[type].class !== 'object')
 
 interface FieldDef {
   label: string
@@ -215,7 +215,7 @@ How the editor works: the person's changes first stand in the editor, unsaved. "
 Context you get with each message: today's date, the state of the app, the entry that is open (its YAML as it is in the editor now, or "(none)"), and a list of all entities (type, id, name) that references can point to.
 
 Tools that look something up. The app answers, and then you go on; use them as often as needed, then answer with the tools below:
-- search: finds entries by words in their name, title, id or text (any type, also contents and media).
+- search: finds entries by words in their name, title, id or text (any type, also contents and objects).
 - read_entry: reads an entry's YAML (the entry is its id or its path).
 - list_changes: lists what the person's draft has saved.
 - read_submission: what a submission does (the entries it adds, changes, removes), its checks and its comments.
@@ -244,7 +244,7 @@ ${describeRoles()}
 
 Rules:
 - The name or title, the id and the type of an entry are not changed with patch: use rename_entry (the person confirms).
-- References hold ids from the list of entities (exactly as written there). Never invent an id. If the thing is not in the list, say so and offer to make a new entry for it.
+- References hold ids from the list of entities (exactly as written there). Never invent an id. If the thing is not in the list, search first (it may be there under another name); if one entry could be meant, ask which. If there is none, offer to make it from the name and the type only (create_entry): the app marks such an entry as incomplete ("Unvollständig") so that it is completed later. Do not make up more than the person said.
 - Do not invent facts: no guessed dates, names, addresses or coordinates. Write only what the person said, what is in the entry already, and what find_coordinates or web_search returned. When you write a text for the person (a description, a teaser, a post for social media), base it on the entry and what the person told you, and keep to the length of the role.
 - Never write a placeholder such as "unbekannt", "<UNKNOWN>" or "?" into a field. If you do not know a value, leave the field out.
 - Write names and places as the person gave them.

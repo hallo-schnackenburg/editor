@@ -37,12 +37,27 @@ export function read(yamlText) {
     if (!(t.class in data.classes)) fail(`types.${type}.class must be one of: ${Object.keys(data.classes).join(', ')}.`)
     if (!(t.id in data.ids)) fail(`types.${type}.id must be one of: ${Object.keys(data.ids).join(', ')}.`)
     if (typeof t.dir !== 'string') fail(`types.${type} needs a dir.`)
+    if (t.kinds !== undefined) {
+      if (!isRecord(t.kinds) || Object.keys(t.kinds).length === 0) fail(`types.${type}.kinds must name the kinds.`)
+      for (const [kind, k] of Object.entries(t.kinds)) {
+        if (!NAME.test(kind) || !isRecord(k) || typeof k.label !== 'string' || !isRecord(k.subtypes) || !isRecord(k.files)) fail(`types.${type}.kinds.${kind} needs a label, subtypes and files.`)
+      }
+      const spec = t.fields?.kind?.schema?.enum
+      if (!Array.isArray(spec) || spec.join() !== Object.keys(t.kinds).join()) fail(`types.${type}.fields.kind must be an enum of the kinds, in the same order.`)
+      if (t.subtypes !== undefined) fail(`types.${type}: subtypes belong to the kinds.`)
+    }
     for (const [field, spec] of Object.entries(t.fields ?? {})) {
       if (!NAME.test(field) || ['id', 'type', 'subtype'].includes(field)) fail(`types.${type}.fields.${field}: not a usable field name.`)
       if (spec?.options !== undefined && !(isRecord(spec.options) && Array.isArray(spec.schema?.enum) && spec.schema.enum.every((v) => typeof spec.options[v] === 'string'))) fail(`types.${type}.fields.${field}.options must name every value of the enum.`)
       if (!isRecord(spec) || typeof spec.label !== 'string' || !(isRecord(spec.schema) !== Array.isArray(spec.ref))) fail(`types.${type}.fields.${field} needs a label and either a schema or a ref (a list of types).`)
       if (spec.single !== undefined && !(spec.ref && spec.single === true && spec.max === undefined)) fail(`types.${type}.fields.${field}: single (true) belongs to a ref and excludes max.`)
       for (const target of spec.ref ?? []) if (!(target in data.types)) fail(`types.${type}.fields.${field}.ref: "${target}" is not a type.`)
+      for (const kind of spec.applies ?? []) if (!(kind in (t.kinds ?? {}))) fail(`types.${type}.fields.${field}.applies: "${kind}" is not a kind.`)
+      for (const [part, prop] of Object.entries(spec.schema?.properties ?? {})) {
+        if (prop?.ref === undefined) continue
+        if (typeof prop.label !== 'string') fail(`types.${type}.fields.${field}.${part} needs a label.`)
+        for (const target of prop.ref) if (!(target in data.types)) fail(`types.${type}.fields.${field}.${part}.ref: "${target}" is not a type.`)
+      }
     }
   }
   for (const [role, r] of Object.entries(data.text_roles)) {
@@ -57,6 +72,10 @@ export function read(yamlText) {
   }
   return data
 }
+
+/** The subtypes of a type; of a type with kinds, those of all its kinds (which of them goes with which kind is checked in core). */
+const subtypesOf = (t) => (t.kinds ? Object.assign({}, ...Object.values(t.kinds).map((k) => k.subtypes)) : (t.subtypes ?? {}))
+const subtypeKeys = (t) => Object.keys(subtypesOf(t))
 
 const toSchema = (spec) =>
   spec.ref
@@ -73,14 +92,17 @@ export function schemaOf(model) {
   const patch = (node) => {
     if (Array.isArray(node)) return node.map(patch)
     if (!isRecord(node)) return node === '__SLUG__' ? slug : node
-    return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, patch(v)]))
+    // A property of an object that is a reference (`origin.by`): the same schema as a reference field.
+    if (Array.isArray(node.ref)) return patch(toSchema(node))
+    // The German name of a property is for the editor, not for the schema (a property that is itself called `label` has a schema as its value).
+    return Object.fromEntries(Object.entries(node).filter(([k, v]) => !(k === 'label' && typeof v === 'string')).map(([k, v]) => [k, patch(v)]))
   }
   const $defs = {}
   for (const [name, def] of Object.entries(model.defs)) $defs[name] = patch(def)
   $defs.text = { ...$defs.text, propertyNames: { enum: Object.keys(roles) } }
   for (const [type, t] of Object.entries(types)) {
     const fields = t.fields ?? {}
-    const subtypes = Object.keys(t.subtypes ?? {})
+    const subtypes = subtypeKeys(t)
     $defs[`entry_${type}`] = {
       required: ['id', 'type', ...Object.entries(fields).filter(([, f]) => f.required).map(([name]) => name)],
       properties: {
@@ -114,12 +136,24 @@ export function kindOf(spec) {
   if (s.$ref === '#/$defs/dates') return 'dates'
   if (s.$ref === '#/$defs/recurrence') return 'rule'
   if (s.$ref === '#/$defs/text') return 'text'
+  if (s.$ref === '#/$defs/edtf') return 'string'
   if (s.type === 'array' && s.items?.$ref === '#/$defs/file') return 'files'
   if (s.type === 'boolean') return 'boolean'
   if (s.type === 'object' && s.properties?.lat && s.properties?.lon) return 'location'
+  if (s.type === 'object' && s.properties && Object.values(s.properties).every((p) => typeof p.label === 'string')) return 'group'
   if (s.type === 'string' && s.format === 'date') return 'date'
   if (s.type === 'string') return 'string'
   return 'other'
+}
+
+/** The parts of an object field (`origin`: by, place), described like fields. */
+function partsOf(spec) {
+  return Object.fromEntries(
+    Object.entries(spec.schema.properties).map(([name, prop]) => {
+      const part = prop.ref ? prop : { schema: prop }
+      return [name, { label: prop.label, kind: kindOf(part), ...(prop.ref ? { ref: prop.ref } : {}), ...(prop.single ? { single: true } : {}), ...(prop.description ? { description: prop.description } : {}) }]
+    }),
+  )
 }
 
 /** The text of the generated TypeScript file. */
@@ -132,8 +166,9 @@ export function modelOf(model) {
         label: t.label,
         dir: t.dir,
         id: t.id,
-        subtypes: t.subtypes ?? {},
-        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.max ? { max: f.max } : {}), ...(f.single ? { single: true } : {}), ...(f.options ? { options: f.options } : {}), ...(f.description ? { description: f.description } : {}), ...(f.multiline ? { multiline: true } : {}) }])),
+        subtypes: subtypesOf(t),
+        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.max ? { max: f.max } : {}), ...(f.single ? { single: true } : {}), ...(f.options ? { options: f.options } : {}), ...(f.description ? { description: f.description } : {}), ...(f.multiline ? { multiline: true } : {}), ...(f.applies ? { applies: f.applies } : {}), ...(kindOf(f) === 'group' ? { parts: partsOf(f) } : {}) }])),
+        ...(t.kinds ? { kinds: Object.fromEntries(Object.entries(t.kinds).map(([kind, k]) => [kind, { label: k.label, subtypes: k.subtypes, files: k.files }])) } : {}),
       },
     ]),
   )
