@@ -16,7 +16,7 @@ export { checkEvent, firstAdvent, isWhen, occurrences, ruleProblem } from './rec
 export type { EventDate, Occurrence, Rule } from './recurrence.js'
 export { folderTitle, validateFolderYaml } from './folder.js'
 export { validateRepo } from './repo.js'
-export { buildIndex, indexEntry } from './index-build.js'
+export { buildBundle, buildIndex, indexEntry } from './index-build.js'
 export type { IndexEntry, RepoIndex } from './index-build.js'
 export type { RepoFile, RepoProblem } from './repo.js'
 export { validateEntryYaml } from './yaml/validate.js'

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { blobSha } from '../src/blob-sha.js'
-import { buildIndex, indexEntry } from '../src/index-build.js'
+import { buildBundle, buildIndex, indexEntry } from '../src/index-build.js'
 import { examples } from './fixtures.js'
 
 const files = () => examples().map((e) => ({ path: e.path, text: e.text }))
@@ -38,6 +38,14 @@ describe('index', () => {
     )
     expect(object?.refs).toEqual(['erika-mustermann', 'feuerwehrhaus', '01kb4z8m3q7xv2n5r6t9c0d1aa'])
     expect(indexEntry({ path: 'entities/people/e.yaml', text: 'id: e\ntype: person\nname: E\n' }, 'x')?.refs).toBeUndefined()
+  })
+
+  it('packs the texts of all entries, one line each, with the commit first', () => {
+    const lines = buildBundle(files(), 'abc', blobSha).trimEnd().split('\n').map((l) => JSON.parse(l))
+    expect(lines[0]).toEqual({ version: 1, commit: 'abc' })
+    const entries = buildIndex(files(), 'abc', blobSha).entries.filter((e) => e.type !== 'folder')
+    expect(lines.slice(1).map((l) => [l.path, l.sha])).toEqual(entries.map((e) => [e.path, e.sha]))
+    expect(lines.slice(1).every((l) => blobSha(l.text) === l.sha)).toBe(true)
   })
 
   it('leaves out what is not ours or not YAML', () => {

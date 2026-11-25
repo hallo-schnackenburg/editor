@@ -79,7 +79,8 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
     }
     m = path.match(/^\/repos\/o\/r\/git\/blobs\/(.+)$/)
     if (m) {
-      for (const t of branches.values()) for (const text of t.values()) if (blob(text) === m[1]) return json({ encoding: 'base64', content: btoa(String.fromCharCode(...new TextEncoder().encode(text))) })
+      const wantsRaw = /raw/.test(new Headers(init.headers).get('accept') ?? '')
+      for (const t of branches.values()) for (const text of t.values()) if (blob(text) === m[1]) return wantsRaw ? new Response(text) : json({ encoding: 'base64', content: btoa(String.fromCharCode(...new TextEncoder().encode(text))) })
       return json({ message: 'Not Found' }, 404)
     }
     m = path.match(/^\/repos\/o\/r\/git\/trees\/(.+)$/)

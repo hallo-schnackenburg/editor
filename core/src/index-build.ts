@@ -65,6 +65,20 @@ export function indexEntry(file: RepoFile, sha: string): IndexEntry | undefined 
   return entry
 }
 
+/**
+ * The texts of all entries in one go, for the editor's first start (it would need a request for every hundred entries otherwise):
+ * one line of JSON each, `{"version":1,"commit":…}` first, then `{"path":…,"sha":…,"text":…}`. CI packs it with gzip next to the index.
+ * Folders (.folder.yaml) are not in it, the index has their titles.
+ */
+export function buildBundle(files: RepoFile[], commit: string, shaOf: (text: string) => string): string {
+  const lines = files.flatMap((file) => {
+    const entry = indexEntry(file, shaOf(file.text))
+    return entry && entry.type !== 'folder' ? [{ path: file.path, sha: entry.sha, text: file.text }] : []
+  })
+  lines.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  return [JSON.stringify({ version: 1, commit }), ...lines.map((l) => JSON.stringify(l))].join('\n') + '\n'
+}
+
 /** The index of the files of a repository, in path order so that the same repository gives the same index. */
 export function buildIndex(files: RepoFile[], commit: string, shaOf: (text: string) => string): RepoIndex {
   const entries = files.flatMap((file) => indexEntry(file, shaOf(file.text)) ?? []).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))

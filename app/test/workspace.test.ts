@@ -2,13 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, SignedOut, type Api } from '../src/api.js'
 import { FakeApi } from '../src/fake.js'
 import { titleOf } from '../src/logic.js'
+import { MemoryTextStore, type TextStore } from '../src/texts.js'
 import { POLL_MS, Workspace, defaultName } from '../src/workspace.svelte.js'
 
 const ERIKA = 'entities/people/erika-mustermann.yaml'
 const FEST = 'submission/anna/fest'
 
-async function started(api: Api = new FakeApi()) {
-  const ws = new Workspace(api)
+async function started(api: Api = new FakeApi(), mirror = false, texts?: TextStore) {
+  const ws = new Workspace(api, undefined, undefined, texts)
+  ws.mirror = mirror
+  ws.bundleFrom = 0
   await ws.start()
   ws.stopLive() // no timers left behind
   return ws
@@ -456,12 +459,14 @@ describe('entries that are known from the index only', () => {
   const BERND = 'submission/bernd/feuerwehr-texte'
   const FEUERWEHR = 'entities/organizations/feuerwehr-schnackenburg.yaml'
 
-  /** An api that counts the entries that are read one by one. */
+  /** An api that tells which entries were read, and in how many requests. */
   class Reading extends FakeApi {
-    read: string[] = []
-    async entry(path: string, branch?: string) {
-      this.read.push(path)
-      return super.entry(path, branch)
+    asked: string[] = []
+    requests = 0
+    async read(paths: string[], branch?: string) {
+      this.requests++
+      this.asked.push(...paths)
+      return super.read(paths, branch)
     }
   }
 
@@ -472,9 +477,9 @@ describe('entries that are known from the index only', () => {
     expect(titleOf(ws.entries.find((e) => e.path === ERIKA)!)).toBe('Erika Mustermann')
     expect(ws.dirty).toEqual([])
     expect(ws.changes).toEqual([])
-    expect(api.read).toEqual([])
+    expect(api.asked).toEqual([])
     await ws.select(ERIKA)
-    expect(api.read).toEqual([ERIKA])
+    expect(api.asked).toEqual([ERIKA])
     expect(ws.selected?.unloaded).toBeUndefined()
     expect(ws.selected?.text).toContain('Erika Mustermann')
     expect(ws.dirty).toEqual([])
@@ -486,7 +491,7 @@ describe('entries that are known from the index only', () => {
     await ws.select(ERIKA)
     await ws.select(undefined)
     await ws.select(ERIKA)
-    expect(api.read).toEqual([ERIKA])
+    expect(api.asked).toEqual([ERIKA])
   })
 
   it('show what a submission changed without being read: the version tells', async () => {
@@ -494,7 +499,7 @@ describe('entries that are known from the index only', () => {
     const ws = await started(api)
     await ws.switchTo(BERND)
     expect(ws.changes.map((c) => [c.kind, c.entry.path])).toEqual([['changed', FEUERWEHR]])
-    expect(api.read).toEqual([])
+    expect(api.asked).toEqual([])
   })
 
   it('are read with what the base has of them, so that a change can be taken back', async () => {
@@ -502,7 +507,7 @@ describe('entries that are known from the index only', () => {
     const ws = await started(api)
     await ws.switchTo(BERND)
     await ws.select(FEUERWEHR)
-    expect(api.read.sort()).toEqual([FEUERWEHR, FEUERWEHR])
+    expect(api.asked.sort()).toEqual([FEUERWEHR, FEUERWEHR])
     await ws.discard(FEUERWEHR)
     expect(ws.changes).toEqual([])
     expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).not.toContain('e. V.')
@@ -517,5 +522,46 @@ describe('entries that are known from the index only', () => {
     const read = ws.entries.filter((e) => !e.unloaded).map((e) => e.path)
     expect(read).toContain('contents/traditionen/osterfeuer-tradition.yaml')
     expect(ws.entries.find((e) => e.path === 'contents/traditionen/osterfeuer-tradition.yaml')!.data?.about).not.toContain('osterfeuer')
+    expect(api.requests).toBeLessThanOrEqual(2) // the entries that refer to it are read together, not one by one
+  })
+})
+
+describe('the copy of all texts on this computer', () => {
+  const settle = () => new Promise((r) => setTimeout(r, 50))
+
+  it('is filled from the bundle (one download), and what it has is not asked for again', async () => {
+    class Counting extends FakeApi {
+      bundles = 0
+      requests = 0
+      async bundle() {
+        this.bundles++
+        return super.bundle()
+      }
+      async read(paths: string[], branch?: string) {
+        this.requests++
+        return super.read(paths, branch)
+      }
+    }
+    const api = new Counting()
+    const texts = new MemoryTextStore()
+    const ws = await started(api, true, texts)
+    await settle()
+    expect((await texts.keys()).size).toBe(ws.entries.length)
+    expect(api.requests).toBe(0)
+    await ws.select(ERIKA)
+    expect(api.requests).toBe(0)
+    expect(ws.selected?.text).toContain('Erika Mustermann')
+  })
+
+  it('reads in blocks when there is no bundle', async () => {
+    class NoBundle extends FakeApi {
+      async bundle() {
+        return null
+      }
+    }
+    const texts = new MemoryTextStore()
+    const ws = await started(new NoBundle(), true, texts)
+    await settle()
+    expect((await texts.keys()).size).toBe(ws.entries.length)
   })
 })

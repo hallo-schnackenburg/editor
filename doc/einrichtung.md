@@ -79,4 +79,4 @@ Der alte Branch `edit/<login>` aus der ersten Version wird nicht mehr benutzt un
 
 ## Index
 
-Die Vorlage hat einen zweiten Job `index`. Er läuft nach jedem Push auf `main`, nachdem `validate` grün war, baut aus den Einträgen eine `index.json` (eine Zeile pro Datei) und legt sie als einzigen Commit auf den Branch `index` des Datenrepos (wird jedes Mal ersetzt). Der Job braucht nur das mitgelieferte Token (`contents: write`). Ist `main` durch Branch-Schutz gesperrt, gilt das nicht für den Branch `index`; ein Schutz darauf wäre zu lassen.
+Die Vorlage hat einen zweiten Job `index`. Er läuft nach jedem Push auf `main`, nachdem `validate` grün war, baut aus den Einträgen eine `index.json` (eine Zeile pro Datei) und eine `entries.ndjson.gz` (die Texte aller Einträge, gepackt; der Editor lädt sie einmal beim ersten Start) und legt beide als einzigen Commit auf den Branch `index` des Datenrepos (wird jedes Mal ersetzt). Der Job braucht nur das mitgelieferte Token (`contents: write`). Ist `main` durch Branch-Schutz gesperrt, gilt das nicht für den Branch `index`; ein Schutz darauf wäre zu lassen.

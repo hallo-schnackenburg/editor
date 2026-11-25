@@ -4,11 +4,12 @@
 
 import { buildIndex, indexEntry, isStoredPath, type IndexEntry, type RepoIndex } from '@contents-editor/core'
 import { Refused, headOf, readBlobs, readEntries } from './common.js'
-import { call } from './github.js'
+import { call, raw } from './github.js'
 import { Repo, type ChangedFile } from './repository.js'
 
 export const INDEX_BRANCH = 'index'
 const INDEX_FILE = 'index.json'
+const BUNDLE_FILE = 'entries.ndjson.gz'
 
 export interface IndexAnswer {
   /** The commit of the base branch the entries are as of. */
@@ -18,14 +19,27 @@ export interface IndexAnswer {
   entries: IndexEntry[]
 }
 
-/** The index CI made, or null if there is none (yet) or it is not one we can read. */
-async function storedIndex(token: string, repo: string, fetchFn: typeof fetch): Promise<RepoIndex | null> {
+/** The sha of a file on the branch `index`, or null if there is none. */
+async function indexFile(token: string, repo: string, name: string, fetchFn: typeof fetch): Promise<string | null> {
   if (!(await headOf(token, repo, INDEX_BRANCH, fetchFn))) return null
   const tree = await call<{ tree: { path: string; type: string; sha: string }[] }>(fetchFn, token, 'GET', `/repos/${repo}/git/trees/${INDEX_BRANCH}`)
-  const file = tree.tree.find((node) => node.type === 'blob' && node.path === INDEX_FILE)
-  if (!file) return null
+  return tree.tree.find((node) => node.type === 'blob' && node.path === name)?.sha ?? null
+}
+
+/** The bundle of the texts of all entries that CI made (gzip, passed on as it is), or null if there is none (yet). */
+export async function readBundle(token: string, repo: string, fetchFn: typeof fetch): Promise<Response | null> {
+  const sha = await indexFile(token, repo, BUNDLE_FILE, fetchFn)
+  if (!sha) return null
+  const upstream = await raw(fetchFn, token, `/repos/${repo}/git/blobs/${sha}`)
+  return new Response(upstream.body, { headers: { 'content-type': 'application/gzip', 'cache-control': 'private, no-store' } })
+}
+
+/** The index CI made, or null if there is none (yet) or it is not one we can read. */
+async function storedIndex(token: string, repo: string, fetchFn: typeof fetch): Promise<RepoIndex | null> {
+  const sha = await indexFile(token, repo, INDEX_FILE, fetchFn)
+  if (!sha) return null
   // The blob API (not the contents API) because the index may be larger than the contents API delivers.
-  const blob = await call<{ content: string; encoding: string }>(fetchFn, token, 'GET', `/repos/${repo}/git/blobs/${file.sha}`)
+  const blob = await call<{ content: string; encoding: string }>(fetchFn, token, 'GET', `/repos/${repo}/git/blobs/${sha}`)
   if (blob.encoding !== 'base64') return null
   try {
     const text = new TextDecoder().decode(Uint8Array.from(atob(blob.content.replace(/\s/g, '')), (c) => c.charCodeAt(0)))
@@ -83,6 +97,21 @@ export async function readIndex(token: string, repo: string, base: string, branc
   const found = await new Repo(token, repo, base, fetchFn).compare(main.commit, head)
   const entries = found ? await applied(token, repo, main.entries, found.files, head, fetchFn) : await indexed(token, repo, head, fetchFn)
   return { commit: main.commit, head, entries, exists: true }
+}
+
+/** Many entries at once (a few requests of 100): from the submission's branch where it has the file, else from the base branch. What is not there is left out. */
+export async function readMany(token: string, repo: string, base: string, branch: string | undefined, paths: string[], fetchFn: typeof fetch): Promise<{ path: string; sha: string; text: string }[]> {
+  const found = new Map<string, { path: string; sha: string; text: string }>()
+  for (const ref of branch ? [branch, base] : [base]) {
+    const missing = paths.filter((p) => !found.has(p))
+    if (missing.length === 0) break
+    const blobs = await readBlobs(token, repo, missing.map((p) => `${ref}:${p}`), fetchFn)
+    missing.forEach((path, i) => {
+      const blob = blobs[i]
+      if (blob) found.set(path, { path, sha: blob.oid, text: blob.text })
+    })
+  }
+  return paths.flatMap((p) => found.get(p) ?? [])
 }
 
 /** One entry's text and sha: from the submission's branch if it has the file, else from the base branch. */

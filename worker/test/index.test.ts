@@ -90,3 +90,31 @@ describe('one entry', () => {
     expect((await get(gh, cookie, '/api/repo/entry')).status).toBe(400)
   })
 })
+
+describe('several entries at once', () => {
+  const post = (cookie: string, body: unknown) => request(cookie, '/api/repo/read', { method: 'POST', body: JSON.stringify(body) })
+
+  it('are read in one request, from the branch of the submission where it has the file, else from the base; what is not there is left out', async () => {
+    const { gh, cookie } = await setup()
+    gh.branches.set(BRANCH, new Map(gh.branches.get('main')!))
+    gh.branches.get(BRANCH)!.set('entities/places/feuerwehrhaus.yaml', PLACE)
+    const paths = ['entities/people/erika-mustermann.yaml', 'entities/places/feuerwehrhaus.yaml', 'entities/places/gibts-nicht.yaml']
+    gh.calls.length = 0
+    const response = await handle(post(cookie, { paths, branch: BRANCH }), env, gh.fn)
+    const data = (await response.json()) as any
+    expect(response.status).toBe(200)
+    expect(data.entries).toEqual([
+      { path: paths[0], sha: gh.blob(PERSON), text: PERSON },
+      { path: paths[1], sha: gh.blob(PLACE), text: PLACE },
+    ])
+    // the base branch only for what the submission's branch lacks: two requests, not one for each entry
+    expect(gh.calls.filter((c) => c.url === '/graphql')).toHaveLength(2)
+  })
+
+  it('takes only paths of entries, and a branch of a submission', async () => {
+    const { gh, cookie } = await setup()
+    expect((await handle(post(cookie, { paths: ['README.md'] }), env, gh.fn)).status).toBe(400)
+    expect((await handle(post(cookie, { paths: [] }), env, gh.fn)).status).toBe(400)
+    expect((await handle(post(cookie, { paths: ['entities/people/erika-mustermann.yaml'], branch: 'main' }), env, gh.fn)).status).toBe(400)
+  })
+})

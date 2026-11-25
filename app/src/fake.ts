@@ -77,6 +77,16 @@ export class FakeApi implements Api {
     return text === undefined ? null : { path, text, sha: sha(text) }
   }
 
+  /** The bundle as CI makes it: lines of JSON, packed. */
+  async bundle(): Promise<ReadableStream<Uint8Array> | null> {
+    const lines = [{ version: 1, commit: 'fake' }, ...[...this.main].flatMap(([path, text]) => (FOLDER_PATH.test(path) ? [] : [{ path, sha: sha(text), text }]))]
+    return new Blob([lines.map((l) => JSON.stringify(l)).join('\n') + '\n']).stream().pipeThrough(new CompressionStream('gzip')) as ReadableStream<Uint8Array>
+  }
+
+  async read(paths: string[], branch?: string): Promise<RemoteEntry[]> {
+    return (await Promise.all(paths.map((p) => this.entry(p, branch)))).flatMap((e) => e ?? [])
+  }
+
   /** The branch to commit to, made from main if there is none; refuses a submission that is finished. */
   private target(submission: SubmissionRef): { files: Files; pull?: Pull } {
     if (!isSubmissionBranch(submission.branch)) throw new ApiError('Keine Einreichung.', 400)

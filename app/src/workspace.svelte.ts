@@ -11,8 +11,9 @@ import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 /** How many times the assistant may look things up for one message. */
 const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
-import { ApiError, SignedOut, type Api, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
+import { ApiError, SignedOut, type Api, type RemoteEntry, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
 import { folderOf, foldersOf, idOf, describeIssue, isMarker, issuesOf, makeEntry, makeStub, marker, nameFieldOf, newEntry, planRemoval, planRename, refsIn, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { MemoryTextStore, type TextStore } from './texts.js'
 import { Known, MemoryStore, type Listed, type Store, type View } from './known.js'
 import { Review, type Host } from './review.svelte.js'
 
@@ -66,8 +67,8 @@ const isOpen = (c: Submission): boolean => c.state === 'draft' || c.state === 's
 
 const texts = (entries: { path: string; text: string }[]): Map<string, string> => new Map(entries.map((e) => [e.path, e.text]))
 
-/** How many entries are read at the same time. */
-const PARALLEL = 8
+/** How many entries are read in one request. */
+const READ_BATCH = 100
 
 /** The names of the topics: the folder of each .folder.yaml of the index, by folder (contents/natur). */
 function folderNames(lines: Line[]): Record<string, string> {
@@ -107,6 +108,9 @@ export class Workspace implements Host {
   loading = $state(false)
   /** The open entry is being read. */
   opening = $state(false)
+  /** Entries are being read from the server (to open, rename, delete or take back). */
+  reading = $state(false)
+  #reads = 0
   /** Something is being written to the draft. */
   saving = $state(false)
   /** Something went wrong that the person should read. */
@@ -152,6 +156,13 @@ export class Workspace implements Host {
   /** What was read of the repository (also kept in the browser): shown at once, then looked at again. */
   readonly #known = new Known()
   readonly #store: Store
+  readonly #texts: TextStore
+  /** Whether a copy of all texts is made in the background (off in tests that count what is read). */
+  mirror = true
+  /** From this many missing texts on, the bundle is downloaded instead of reading them in blocks. */
+  bundleFrom = 300
+  /** Counts the runs of the background copy: a new start or a sign-out ends the old one. */
+  #mirrorRun = 0
   #saveTimer: ReturnType<typeof setTimeout> | undefined
   /** The place the person is at is only kept once the start has restored the old one. */
   #viewReady = false
@@ -166,8 +177,9 @@ export class Workspace implements Host {
 
   readonly #agent: Agent | undefined
 
-  constructor(api: Api, agent?: Agent, store: Store = new MemoryStore()) {
+  constructor(api: Api, agent?: Agent, store: Store = new MemoryStore(), texts: TextStore = new MemoryTextStore()) {
     this.#api = api
+    this.#texts = texts
     this.#agent = agent
     this.#store = store
     this.review = new Review(api, this)
@@ -350,6 +362,7 @@ export class Workspace implements Host {
       const result = fetched ?? this.#known.recall(from)
       if (!result) return
       this.#persist()
+      if (this.mirror) void this.#mirror()
       const before = this.#saved
       this.folders = folderNames(result.entries)
       if (base) this.#takeBase(base)
@@ -464,16 +477,127 @@ export class Workspace implements Host {
     return path ? this.ensure([path], true) : Promise.resolve()
   }
 
+  /** Fetches the texts of entries (100 in a request) into the cache of versions. Returns what came, by path. */
+  async #fetchTexts(paths: string[], branch: string | undefined): Promise<Map<string, RemoteEntry>> {
+    const got = new Map<string, RemoteEntry>()
+    const stored: { sha: string; text: string }[] = []
+    for (let i = 0; i < paths.length; i += READ_BATCH) {
+      for (const entry of await this.#api.read(paths.slice(i, i + READ_BATCH), branch)) {
+        got.set(entry.path, entry)
+        this.#known.keepText(entry.sha, entry.text)
+        stored.push({ sha: entry.sha, text: entry.text })
+      }
+    }
+    void this.#texts.put(stored).catch(() => undefined)
+    if (paths.length > 0) this.#persist()
+    return got
+  }
+
+  /** Brings the texts of these versions from the store on this computer into memory (what it does not have stays missing). */
+  async #recallTexts(shas: string[]): Promise<void> {
+    const wanted = [...new Set(shas)].filter((sha) => this.#known.text(sha) === undefined)
+    if (wanted.length === 0) return
+    try {
+      for (const [sha, text] of await this.#texts.get(wanted)) this.#known.keepText(sha, text)
+    } catch {
+      // a store that cannot be read is as good as an empty one
+    }
+  }
+
   /**
-   * Reads the entries that are known from the index only (a few at a time), together with what the base has of them, so that changes and
+   * Keeps a copy of all texts on this computer, in the background: what the store lacks comes from the bundle of CI (one download) and, if
+   * that is not there or older, in blocks of a hundred. Whoever needs an entry now reads it on its own (`ensure`), independent of this.
+   */
+  async #mirror(): Promise<void> {
+    const run = ++this.#mirrorRun
+    const alive = () => run === this.#mirrorRun && !!this.user
+    try {
+      const have = await this.#texts.keys()
+      const missing = new Map<string, { path: string; branch: string | undefined }>()
+      for (const [i, group] of [this.#known.base?.entries ?? [], this.branch ? (this.#known.recall(this.branch)?.entries ?? []) : []].entries()) {
+        for (const l of group) if (l.type !== 'folder' && !have.has(l.sha) && !missing.has(l.sha)) missing.set(l.sha, { path: l.path, branch: i === 0 ? undefined : this.branch })
+      }
+      if (missing.size === 0 || !alive()) return
+      if (missing.size > this.bundleFrom) await this.#fromBundle(missing, alive)
+      const rest = [...missing.values()]
+      for (const branch of new Set(rest.map((r) => r.branch))) {
+        const paths = rest.filter((r) => r.branch === branch).map((r) => r.path)
+        for (let i = 0; i < paths.length && alive(); i += READ_BATCH) {
+          const got = await this.#api.read(paths.slice(i, i + READ_BATCH), branch)
+          await this.#texts.put(got.map((e) => ({ sha: e.sha, text: e.text })))
+        }
+      }
+    } catch {
+      // the copy is a convenience: what is not in it is read when it is needed
+    }
+  }
+
+  /** Reads the bundle and stores the texts of it that are missing (they leave `missing`). */
+  async #fromBundle(missing: Map<string, unknown>, alive: () => boolean): Promise<void> {
+    const body = await this.#api.bundle()
+    if (!body) return
+    const reader = body.pipeThrough(new DecompressionStream('gzip') as unknown as ReadableWritablePair<Uint8Array, Uint8Array>).pipeThrough(new TextDecoderStream() as unknown as ReadableWritablePair<string, Uint8Array>).getReader()
+    let pending = ''
+    let batch: { sha: string; text: string }[] = []
+    const flush = async () => {
+      await this.#texts.put(batch)
+      batch = []
+    }
+    const take = (line: string) => {
+      if (!line) return
+      const item = JSON.parse(line) as { sha?: string; text?: string }
+      if (typeof item.sha === 'string' && typeof item.text === 'string' && missing.delete(item.sha)) batch.push({ sha: item.sha, text: item.text })
+    }
+    while (alive()) {
+      const { done, value } = await reader.read()
+      if (done) break
+      pending += value
+      const lines = pending.split('\n')
+      pending = lines.pop() ?? ''
+      for (const line of lines) take(line)
+      if (batch.length >= 500) await flush()
+    }
+    take(pending)
+    await flush()
+    await reader.cancel().catch(() => undefined)
+  }
+
+  /** Something is being read: the screen says so. */
+  async #reading<T>(work: () => Promise<T>): Promise<T> {
+    this.#reads++
+    this.reading = true
+    try {
+      return await work()
+    } finally {
+      if (--this.#reads === 0) this.reading = false
+    }
+  }
+
+  /**
+   * Reads the entries that are known from the index only, all in a few requests, together with what the base has of them, so that changes and
    * "take back" know both. Whoever needs the text of entries (to open, rename, delete or change them) calls this first.
    */
   async ensure(paths: string[], opening = false): Promise<void> {
     const todo = [...new Set(paths)].filter((p) => this.entries.find((e) => e.path === p)?.unloaded)
     if (todo.length === 0) return
+    const shaOf = (p: string) => this.entries.find((e) => e.path === p)!.sha!
+    await this.#recallTexts(todo.flatMap((p) => [shaOf(p), ...(isMarker(this.#base.get(p) ?? '') ? [this.#base.get(p)!.slice(1)] : [])]))
+    const unknown = todo.filter((p) => this.#known.text(shaOf(p)) === undefined)
+    // The base's version of an entry that differs from the branch's is read too.
+    const baseMark = (p: string) => {
+      const mark = this.#base.get(p)
+      return mark !== undefined && isMarker(mark) && mark !== marker(shaOf(p)) ? mark : undefined
+    }
+    const baseUnknown = todo.filter((p) => {
+      const mark = baseMark(p)
+      return mark !== undefined && this.#known.text(mark.slice(1)) === undefined
+    })
     if (opening) this.opening = true
     try {
-      for (let i = 0; i < todo.length; i += PARALLEL) await Promise.all(todo.slice(i, i + PARALLEL).map((p) => this.#read(p)))
+      const own = unknown.length + baseUnknown.length > 0 ? await this.#reading(async () => ({ own: await this.#fetchTexts(unknown, this.branch), base: await this.#fetchTexts(baseUnknown, undefined) })) : { own: new Map<string, RemoteEntry>(), base: new Map() }
+      const missing = unknown.find((p) => !own.own.has(p))
+      if (missing) throw new Error(`Den Eintrag „${missing}“ gibt es nicht mehr. Lade die Einträge neu.`)
+      for (const p of todo) this.#apply(p, own.own.get(p))
     } catch (error) {
       this.#fail(error)
     } finally {
@@ -492,45 +616,43 @@ export class Workspace implements Host {
     await this.ensure([...below.map((e) => e.path), ...this.entries.filter((e) => refsIn(e).some((id) => ids.has(id))).map((e) => e.path)])
   }
 
-  async #read(path: string): Promise<void> {
+  /** The entry takes the text that was read (and the base gets its text, if that is known). */
+  #apply(path: string, fetched?: RemoteEntry): void {
     const stub = this.entries.find((e) => e.path === path)
     if (!stub?.unloaded || !stub.sha) return
-    let sha = stub.sha
-    let text = this.#known.text(sha)
-    if (text === undefined) {
-      const fetched = await this.#api.entry(path, this.branch)
-      if (!fetched) throw new Error(`Den Eintrag „${path}“ gibt es nicht mehr. Lade die Einträge neu.`)
-      sha = fetched.sha
-      text = fetched.text
-      this.#known.keepText(sha, text)
-      this.#persist()
+    const text = fetched?.text ?? this.#known.text(stub.sha)
+    if (text === undefined) return
+    const mark = this.#base.get(path)
+    if (mark !== undefined && isMarker(mark)) {
+      const baseText = mark === marker(stub.sha) ? text : this.#known.text(mark.slice(1))
+      if (baseText !== undefined) this.#base = new Map(this.#base).set(path, baseText)
     }
-    // The base has the same version, or its text is asked for too (the changes need both).
-    const baseMark = this.#base.get(path)
-    if (baseMark !== undefined && isMarker(baseMark)) await this.#readBase(path, baseMark === marker(stub.sha) ? text : undefined)
-    // Meanwhile the entry may have been changed or replaced: then what was read is not wanted.
-    const now = this.entries.find((e) => e.path === path)
-    if (!now?.unloaded || now.sha !== stub.sha) return
-    const read = makeEntry(path, text, sha)
+    const read = makeEntry(path, text, fetched?.sha ?? stub.sha)
     this.entries = this.entries.map((e) => (e.path === path ? read : e))
     if (this.#saved.get(path) === marker(stub.sha)) this.#saved = new Map(this.#saved).set(path, text)
   }
 
-  /** The text of the base's version of an entry (`known` if it is already at hand). */
-  async #readBase(path: string, known?: string): Promise<void> {
-    const mark = this.#base.get(path)
-    if (mark === undefined || !isMarker(mark)) return
-    let text = known
-    if (text === undefined) {
-      text = this.#known.text(mark.slice(1))
-      if (text === undefined) {
-        const fetched = await this.#api.entry(path, undefined)
-        if (!fetched) return
-        text = fetched.text
-        this.#known.keepText(fetched.sha, text)
-      }
+  /** The texts the base has of these entries (the ones it has not read yet are fetched, together). */
+  async #readBases(paths: string[]): Promise<void> {
+    const marked = (p: string) => {
+      const mark = this.#base.get(p)
+      return mark !== undefined && isMarker(mark) ? mark : undefined
     }
-    if (this.#base.get(path) === mark) this.#base = new Map(this.#base).set(path, text)
+    await this.#recallTexts(paths.flatMap((p) => marked(p)?.slice(1) ?? []))
+    const need = paths.filter((p) => {
+      const mark = marked(p)
+      return mark !== undefined && this.#known.text(mark.slice(1)) === undefined
+    })
+    try {
+      if (need.length > 0) await this.#reading(() => this.#fetchTexts(need, undefined))
+    } catch (error) {
+      this.#fail(error)
+    }
+    for (const p of paths) {
+      const mark = marked(p)
+      const text = mark === undefined ? undefined : this.#known.text(mark.slice(1))
+      if (text !== undefined) this.#base = new Map(this.#base).set(p, text)
+    }
   }
 
   /** New entries with a placeholder for a name, as long as nothing was changed: texts as they were made, by path. */
@@ -825,10 +947,10 @@ export class Workspace implements Host {
       // What the renaming touched is read, with the texts the base has of it.
       const paths = [...group.moves.map((m) => m.before.path), ...group.rewrites.map((r) => r.path)]
       await this.ensure(paths)
-      await Promise.all(paths.map((p) => this.#readBase(p)))
+      await this.#readBases(paths)
       this.#undoRename(group, this.#base)
     } else if (!this.entries.some((e) => e.path === path)) {
-      await this.#readBase(path)
+      await this.#readBases([path])
       const text = this.#base.get(path)
       if (text !== undefined && !isMarker(text)) {
         const restored = makeEntry(path, text, 'base')
@@ -836,7 +958,7 @@ export class Workspace implements Host {
         const id = idOf(restored)
         const referring = [...this.#baseLines.values()].filter((l) => l.refs?.includes(id)).map((l) => l.path)
         await this.ensure(referring)
-        await Promise.all(referring.map((p) => this.#readBase(p)))
+        await this.#readBases(referring)
         const others = referring.flatMap((p) => (isMarker(this.#base.get(p)) ? [] : [makeEntry(p, this.#base.get(p)!, 'base')]))
         const back = new Map(planRemoval(restored, others).map((c) => [c.before.path, c]))
         this.entries = [...this.entries, restored].map((e) => {
@@ -848,7 +970,7 @@ export class Workspace implements Host {
       this.entries = this.entries.filter((e) => e.path !== path)
       if (this.selectedPath === path) this.select(undefined)
     } else {
-      await this.#readBase(path)
+      await this.#readBases([path])
       const text = this.#base.get(path)
       if (text !== undefined && !isMarker(text)) this.entries = this.entries.map((e) => (e.path === path ? withText(e, text) : e))
     }
@@ -1078,6 +1200,7 @@ export class Workspace implements Host {
   signedOut(): void {
     this.stopLive()
     clearTimeout(this.#saveTimer)
+    this.#mirrorRun++
     this.#known.clear()
     this.#baseKnown = false
     this.#viewReady = false

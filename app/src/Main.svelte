@@ -25,6 +25,7 @@
     <strong>Contents Editor</strong>
     <span class="spacer"></span>
     {#if ws.saving}<span class="muted">Speichert ...</span>{/if}
+    {#if ws.reading}<span class="muted">Liest Einträge ...</span>{/if}
     <span class="live" class:on={ws.liveOpen} title={ws.liveOpen ? 'Live verbunden' : 'Keine Live-Verbindung: es wird alle Minute nachgefragt.'}>●</span>
     <button onclick={() => void ws.reload()} disabled={ws.loading}>{ws.loading ? 'Lädt ...' : 'Neu laden'}</button>
     <span class="muted">{ws.user?.name}</span>

@@ -19,8 +19,8 @@ export interface Listed<T extends Versioned = IndexEntry> {
   entries: T[]
 }
 
-/** How many texts of entries are kept (by version): the ones that were opened last. */
-const MAX_TEXTS = 300
+/** How many texts of entries are held in memory (by version): the ones that were used last. The rest is in the store of texts (texts.ts). */
+const MAX_TEXTS = 2000
 
 /** A branch as it differs from the base. */
 export interface BranchRecord {
@@ -50,8 +50,6 @@ export interface Snapshot {
   view?: View
   submissions: Submission[]
   base?: Listed
-  /** The texts of entries that were opened, by version. */
-  texts?: Record<string, string>
   branches: Record<string, BranchRecord>
   comments: Record<number, Comment[]>
 }
@@ -146,13 +144,12 @@ export class Known {
   }
 
   snapshot(user: User): Snapshot {
-    return { login: user.login, user, view: this.view, submissions: this.submissions, base: this.base, texts: Object.fromEntries(this.texts), branches: Object.fromEntries(this.branches), comments: Object.fromEntries(this.comments) }
+    return { login: user.login, user, view: this.view, submissions: this.submissions, base: this.base, branches: Object.fromEntries(this.branches), comments: Object.fromEntries(this.comments) }
   }
 
   restore(snapshot: Snapshot): void {
     this.clear()
     this.base = snapshot.base
-    for (const [sha, text] of Object.entries(snapshot.texts ?? {})) this.texts.set(sha, text)
     this.view = snapshot.view
     this.submissions = snapshot.submissions
     for (const [branch, record] of Object.entries(snapshot.branches)) this.branches.set(branch, record)

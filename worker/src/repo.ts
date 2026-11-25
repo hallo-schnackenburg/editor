@@ -3,6 +3,8 @@
 //   GET    /repo/entries[?branch=submission/…]   every entry of that submission's branch (or of the base branch, if there is no branch yet)
 //   GET    /repo/index[?branch=submission/…]     one line per entry instead of the entries (index-read.ts): as of the newest commit of the base branch,
 //                                            plus what that submission's branch changes
+//   GET    /repo/bundle                      the texts of all entries in one gzip file (made by CI next to the index), for the first start of the editor
+//   POST   /repo/read                        {paths, branch?}: the texts and shas of several entries at once (as GET /repo/entry gives one)
 //   GET    /repo/entry?path=…[&branch=…]     the text and sha of one entry (of the submission's branch if it has it, else of the base branch)
 //   PUT    /repo/entry                       saves one entry as a commit on a submission's branch
 //   DELETE /repo/entry                       removes one entry the same way
@@ -18,11 +20,14 @@ import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, rea
 import { call } from './github.js'
 import { Repo } from './repository.js'
 import type { GithubEnv } from './github.js'
-import { readIndex, readOne } from './index-read.js'
+import { readBundle, readIndex, readMany, readOne } from './index-read.js'
 import { pullFor } from './submissions.js'
 import type { Auth } from './session.js'
 
 type Env = GithubEnv
+
+/** The most entries one request reads. */
+const MAX_READ = 300
 
 /** The most entries one commit holds (a renaming with everything below it and every reference to it). */
 const MAX_COMMIT = 300
@@ -81,7 +86,7 @@ async function afterCommit(prepared: Awaited<ReturnType<typeof prepare>>, reposi
 }
 
 export async function handleRepo(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
-  if (route !== '/repo/entries' && route !== '/repo/index' && route !== '/repo/entry' && route !== '/repo/commit') return null
+  if (route !== '/repo/entries' && route !== '/repo/index' && route !== '/repo/bundle' && route !== '/repo/read' && route !== '/repo/entry' && route !== '/repo/commit') return null
   const repo = env.DATA_REPO
   const base = env.BASE_BRANCH ?? 'main'
   if (!repo) return json({ error: 'The server has no DATA_REPO.' }, 500)
@@ -99,6 +104,19 @@ export async function handleRepo(request: Request, route: string, session: Auth,
       const branch = given === null ? undefined : branchOf(given)
       const { exists, ...index } = await readIndex(session.access, repo, base, branch, fetchFn)
       return json({ base, branch: branch ?? null, exists, ...index })
+    }
+
+    if (route === '/repo/bundle' && request.method === 'GET') {
+      return (await readBundle(session.access, repo, fetchFn)) ?? json({ error: 'There is no bundle (yet).' }, 404)
+    }
+
+    if (route === '/repo/read' && request.method === 'POST') {
+      const data = await readBody(request)
+      const paths = Array.isArray(data.paths) ? data.paths.map(storedPath) : []
+      if (paths.length === 0) throw new Refused('There is nothing to read.')
+      if (paths.length > MAX_READ) throw new Refused(`At most ${MAX_READ} entries can be read at once.`, 413)
+      const branch = data.branch === undefined || data.branch === null ? undefined : branchOf(data.branch)
+      return json({ entries: await readMany(session.access, repo, base, branch, paths, fetchFn) })
     }
 
     if (route === '/repo/entry' && request.method === 'GET') {

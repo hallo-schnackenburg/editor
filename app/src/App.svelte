@@ -3,11 +3,12 @@
   import type { Agent } from './agent.js'
   import type { Api } from './api.js'
   import { defaultStore } from './known.js'
+  import { defaultTextStore } from './texts.js'
   import { Workspace } from './workspace.svelte.js'
   import Main from './Main.svelte'
 
   let { api, agent }: { api: Api; agent?: Agent } = $props()
-  const ws = new Workspace(untrack(() => api), untrack(() => agent), defaultStore())
+  const ws = new Workspace(untrack(() => api), untrack(() => agent), defaultStore(), defaultTextStore())
   onMount(() => void ws.start())
 
   const failed = new URLSearchParams(location.search).get('login')

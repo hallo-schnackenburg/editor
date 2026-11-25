@@ -102,6 +102,18 @@ export async function call<T>(fetchFn: typeof fetch, token: string, method: stri
   return (response.status === 204 ? undefined : await response.json()) as T
 }
 
+/** A GET that is answered with the bytes of a file as they are (the body is not read: it can be passed on). */
+export async function raw(fetchFn: typeof fetch, token: string, path: string): Promise<Response> {
+  const response = await fetchFn(`${API}${path}`, {
+    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github.raw+json', 'x-github-api-version': '2022-11-28', 'user-agent': USER_AGENT },
+  })
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => ({}))) as { message?: string }
+    throw new GitHubError(detail.message ?? `GitHub answered ${response.status}`, response.status)
+  }
+  return response
+}
+
 export async function currentUser(token: string, fetchFn: typeof fetch): Promise<GitHubUser> {
   const user = await call<{ login: string; name: string | null; avatar_url: string }>(fetchFn, token, 'GET', '/user')
   return { login: user.login, name: user.name || user.login, avatar: user.avatar_url }

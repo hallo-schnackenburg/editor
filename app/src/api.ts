@@ -105,6 +105,10 @@ export interface Api {
   index(branch?: string): Promise<IndexResult>
   /** One entry, from the submission's branch if it has the file there, else from the base branch. Null if there is none. */
   entry(path: string, branch?: string): Promise<RemoteEntry | null>
+  /** The texts of all entries of the base branch as one gzip stream of lines of JSON (made by CI), or null if there is none (yet). */
+  bundle(): Promise<ReadableStream<Uint8Array> | null>
+  /** Several entries at once, as `entry` gives them (those that are not there are left out). */
+  read(paths: string[], branch?: string): Promise<RemoteEntry[]>
   /** `sha` is the version the submission is based on; missing for a new entry. Returns the new version, and the pull request if there is one now. */
   save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }>
   remove(path: string, sha: string, submission: SubmissionRef): Promise<void>
@@ -184,6 +188,17 @@ export class HttpApi implements Api {
   async entry(path: string, branch?: string): Promise<RemoteEntry | null> {
     const response = await this.call(`/repo/entry?path=${encodeURIComponent(path)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`)
     return response.status === 404 ? null : this.json<RemoteEntry>(response)
+  }
+
+  async bundle(): Promise<ReadableStream<Uint8Array> | null> {
+    const response = await this.call('/repo/bundle')
+    if (response.status === 404) return null
+    if (!response.ok || !response.body) throw new ApiError(`Der Server antwortete mit ${response.status}.`, response.status)
+    return response.body
+  }
+
+  async read(paths: string[], branch?: string): Promise<RemoteEntry[]> {
+    return (await this.send<{ entries: RemoteEntry[] }>('POST', '/repo/read', { paths, branch })).entries
   }
 
   save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }> {

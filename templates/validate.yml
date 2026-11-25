@@ -39,7 +39,7 @@ jobs:
         run: npm run validate-repo --workspace @contents-editor/core -- "$GITHUB_WORKSPACE"
         working-directory: .editor
 
-  # The index of the entries (a line per file, core/src/index-build.ts): the editor loads it instead of every file. It is made
+  # The index of the entries (a line per file, core/src/index-build.ts) and a bundle of all their texts: the editor loads the index instead of every file, and the bundle once. It is made
   # from the valid state of the base branch only and kept as the single commit of the branch `index` (replaced every time, no history).
   index:
     needs: validate
@@ -66,7 +66,7 @@ jobs:
       - name: Build the index
         run: |
           mkdir "$RUNNER_TEMP/index"
-          npm run build-index --workspace @contents-editor/core -- "$GITHUB_WORKSPACE" "$GITHUB_SHA" "$RUNNER_TEMP/index/index.json"
+          npm run build-index --workspace @contents-editor/core -- "$GITHUB_WORKSPACE" "$GITHUB_SHA" "$RUNNER_TEMP/index"
         working-directory: .editor
       - name: Publish the index
         working-directory: ${{ runner.temp }}/index
@@ -74,6 +74,6 @@ jobs:
           git init --quiet --initial-branch=index
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.json
+          git add index.json entries.ndjson.gz
           git commit --quiet --message "Index of $GITHUB_SHA"
           git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" index
