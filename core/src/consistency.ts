@@ -35,6 +35,18 @@ type Kinds = Record<string, { label: string; subtypes: Record<string, string>; f
  * (their roles, their numbers, how many). Without files is fine for now (there is no upload yet): the minimum is not enforced.
  */
 export function checkObject(entry: unknown): Issue[] {
+  return objectIssues(entry).filter((i) => !i.warning)
+}
+
+/**
+ * What is merely incomplete in an object (no group yet, a page without its number, an external storage without the place):
+ * to be completed later, so it never refuses a save or fails the check of a repository. Shown as warnings.
+ */
+export function adviseObject(entry: unknown): Issue[] {
+  return objectIssues(entry).filter((i) => i.warning)
+}
+
+function objectIssues(entry: unknown): Issue[] {
   if (!isObj(entry) || entry.type !== 'object' || typeof entry.kind !== 'string') return []
   const model = MODEL.types.object
   const kinds = (model as unknown as { kinds: Kinds }).kinds
@@ -47,16 +59,16 @@ export function checkObject(entry: unknown): Issue[] {
   }
   const wanted = kind.parents?.min ?? 0
   const parents = Array.isArray(entry.parents) ? entry.parents.length : 0
-  if (parents < wanted) issues.push({ path: '/parents', message: `${kind.label} has to be in a group` })
+  if (parents < wanted) issues.push({ path: '/parents', message: `${kind.label} has to be in a group`, warning: true })
   const files = Array.isArray(entry.files) ? entry.files.filter(isObj) : []
   const external = entry.storage === 'external'
-  if (external && !Array.isArray(entry.external)) issues.push({ path: '/external', message: 'storage is external: say where (external)' })
+  if (external && !Array.isArray(entry.external)) issues.push({ path: '/external', message: 'storage is external: say where (external)', warning: true })
   if (!external && entry.external !== undefined) issues.push({ path: '/external', message: 'external only goes with storage: external' })
   const rule = kind.files
   files.forEach((f, i) => {
     const roles = external ? ['thumbnail', 'screenshot'] : rule.roles
     if (roles && typeof f.role === 'string' && !roles.includes(f.role)) issues.push({ path: `/files/${i}/role`, message: `a file of ${kind.label}${external ? ' kept elsewhere' : ''} has the role ${roles.join(' or ')}` })
-    if (rule.numbered && !external && typeof f.num !== 'number') issues.push({ path: `/files/${i}/num`, message: 'the pages are numbered (num)' })
+    if (rule.numbered && !external && typeof f.num !== 'number') issues.push({ path: `/files/${i}/num`, message: 'the pages are numbered (num)', warning: true })
   })
   if (rule.max !== undefined && !external && files.length > rule.max) issues.push({ path: '/files', message: rule.max === 0 ? `${kind.label} has no files of its own` : `${kind.label} has at most ${rule.max} file${rule.max === 1 ? '' : 's'}` })
   return issues

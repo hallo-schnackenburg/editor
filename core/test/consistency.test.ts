@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkFiles, checkObject, checkRefs } from '../src/consistency.js'
+import { adviseObject, checkFiles, checkObject, checkRefs } from '../src/consistency.js'
 import { checkGroups } from '../src/groups.js'
 import { examples, example } from './fixtures.js'
 
@@ -58,20 +58,25 @@ describe('the kind of an object', () => {
     const file = photo().files[0]
     expect(checkObject({ ...photo(), files: [{ ...file, role: 'page' }] })[0].path).toBe('/files/0/role')
     expect(checkObject({ ...photo(), files: [file, file] })).toEqual([{ path: '/files', message: 'Bild has at most 1 file' }])
-    expect(checkObject({ type: 'object', kind: 'document', parents: ['g'], files: [{ ...file, role: 'page' }] })).toEqual([{ path: '/files/0/num', message: 'the pages are numbered (num)' }])
+    const page = { type: 'object', kind: 'document', parents: ['g'], files: [{ ...file, role: 'page' }] }
+    expect(checkObject(page)).toEqual([])
+    expect(adviseObject(page)).toEqual([{ path: '/files/0/num', message: 'the pages are numbered (num)', warning: true }])
     expect(checkObject({ type: 'object', kind: 'group', files: [file] })[0].message).toMatch(/no files of its own/)
   })
 
   it('is in a group, unless it is a group (a group without parents is a root)', () => {
     const { parents: _, ...loose } = photo()
-    expect(checkObject(loose)).toEqual([{ path: '/parents', message: 'Bild has to be in a group' }])
-    expect(checkObject({ ...loose, parents: [] })[0].path).toBe('/parents')
+    expect(checkObject(loose)).toEqual([])
+    expect(adviseObject(loose)).toEqual([{ path: '/parents', message: 'Bild has to be in a group', warning: true }])
+    expect(adviseObject({ ...loose, parents: [] })[0].path).toBe('/parents')
     expect(checkObject({ type: 'object', kind: 'group' })).toEqual([])
     expect(checkObject({ type: 'object', kind: 'group', parents: ['root'] })).toEqual([])
   })
 
   it('wants the place when the content is kept elsewhere, and only then', () => {
-    expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], storage: 'external' })).toEqual([{ path: '/external', message: 'storage is external: say where (external)' }])
+    const where = { type: 'object', kind: 'image', parents: ['g'], storage: 'external' }
+    expect(checkObject(where)).toEqual([])
+    expect(adviseObject(where)).toEqual([{ path: '/external', message: 'storage is external: say where (external)', warning: true }])
     expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], external: [{ site: 'Arcinsys' }] })[0].path).toBe('/external')
     const file = photo().files[0]
     expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], storage: 'external', external: [{ site: 'Arcinsys' }], files: [{ ...file, role: 'thumbnail' }] })).toEqual([])

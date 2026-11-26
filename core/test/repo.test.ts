@@ -104,3 +104,14 @@ describe('validateRepo and the places', () => {
     expect(validateRepo([...files(), ...tree, two])[0].issues[0].path).toBe('/parent')
   })
 })
+
+describe('validateRepo and what is only incomplete', () => {
+  const loose = { path: 'objects/0z/01hf81wat0wdcc5wxfz659zn0z.yaml', text: 'id: 01hf81wat0wdcc5wxfz659zn0z\ntype: object\nkind: image\nsubtype: photo\ntitle: Fährfest\nalt: Fährfest von oben\ncaption: Fährfest, 1960.\norigin:\n  by:\n    - erika-mustermann\nlicense: cc-by-4.0\ndate: 1964-12-12\n' }
+
+  it('reports an object without a group as a warning, not as an error', () => {
+    const problems = validateRepo([...files(), loose])
+    const issues = problems.find((p) => p.path === loose.path)?.issues ?? []
+    expect(issues.some((i) => i.path === '/parents' && i.warning === true)).toBe(true)
+    expect(issues.filter((i) => !i.warning)).toEqual([])
+  })
+})

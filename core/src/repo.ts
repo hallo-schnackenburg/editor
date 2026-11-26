@@ -1,7 +1,7 @@
 // The check of a whole data repository, as the automatic check of a submission runs it: every entry for itself (shape, path,
 // files, texts), and the entries among each other (every reference leads to an entry of an allowed type, no id twice).
 
-import { checkRefs, type Lookup } from './consistency.js'
+import { adviseObject, checkRefs, type Lookup } from './consistency.js'
 import { validateFolderYaml } from './folder.js'
 import { checkGroups } from './groups.js'
 import { checkParent } from './places.js'
@@ -24,7 +24,7 @@ export interface RepoProblem {
 /** Where entries may be kept; a file there that is not an entry file is a mistake. Everything else in the repository is not our business. */
 const OURS = /^(?:entities|contents|objects)\//
 
-/** The problems of the files of a repository, by file; none if all is well. */
+/** The problems of the files of a repository, by file; none if all is well. Issues marked `warning` are incomplete, not wrong. */
 export function validateRepo(files: RepoFile[]): RepoProblem[] {
   const problems = new Map<string, Issue[]>()
   const add = (path: string, issue: Issue) => problems.set(path, [...(problems.get(path) ?? []), issue])
@@ -62,7 +62,7 @@ export function validateRepo(files: RepoFile[]): RepoProblem[] {
     else index.set(id, { type: String(data.type), path, data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkGroups(data, lookup), ...checkEvent(data)]) add(path, issue)
+  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkGroups(data, lookup), ...checkEvent(data), ...adviseObject(data)]) add(path, issue)
 
   return [...problems].map(([path, issues]) => ({ path, issues })).sort((a, b) => a.path.localeCompare(b.path))
 }

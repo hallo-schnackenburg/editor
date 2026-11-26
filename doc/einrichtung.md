@@ -38,6 +38,10 @@ dort; was geprüft und gebaut wird, ändert sich also an einer Stelle). Die Prü
 jeden Eintrag und die Verweise der Einträge untereinander (`npm run validate-repo -- <Ordner>` im Editor-Repo macht
 dasselbe lokal). Bei jedem Push auf `main` baut sie zusätzlich den Index (siehe unten).
 
+Die Prüfung kennt zwei Stufen. Fehler (ungültiges YAML, doppelte IDs, Verweise ins Leere, falscher Pfad) lassen die Prüfung
+scheitern und verhindern den Index. Was nur unvollständig ist (Objekt noch ohne Gruppe, Seite ohne Nummer, externer Speicher
+ohne Ort), erscheint als Warnung am Eintrag; die Prüfung bleibt grün, der Index wird gebaut, gespeichert wird immer.
+
 Der Job der Vorlage heißt `validate`, die Prüfungen daher `validate / validate / validate` und `validate / validate / index`.
 
 In der Vorlage und im Workflow steht `hallo-schnackenburg/editor` als Repo des Editors; anpassen, falls es anders heißt.
