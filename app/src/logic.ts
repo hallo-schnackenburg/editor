@@ -25,9 +25,9 @@ export const isMarker = (text: string | undefined): boolean => text !== undefine
 /** An entry as far as the index tells: enough for the tree, the search, the references and the checks of the others; the file is read when it is opened. */
 export function makeStub(line: Line): Entry {
   const data: Data = { id: line.id ?? line.path, type: line.type, [line.type in MODEL.types ? nameFieldOf(line.type as EntryType) : 'name']: line.title }
-  for (const key of ['kind', 'subtype', 'parent', 'parents', 'date', 'refs'] as const) if (line[key] !== undefined) data[key] = line[key]
-  if (line.stub) data.stub = true
+  for (const key of ['kind', 'subtype', 'parent', 'parents', 'date', 'refs', 'tags'] as const) if (line[key] !== undefined) data[key] = line[key]
   if (line.recurring) data.recurring = true
+  if (line.postal) data.postal_code = line.postal
   if (line.hint) data[line.type === 'content' ? 'published' : 'address'] = line.hint
   const text = marker(line.sha)
   return { path: line.path, sha: line.sha, saved: text, text, data, unloaded: true }
@@ -82,6 +82,7 @@ const WORDS: [RegExp, string][] = [
   [/^the pages are numbered \(num\)$/, 'Die Seiten sind nummeriert (num)'],
   [/ has at most \d+ files?$/, 'Dieser Typ hat nicht so viele Dateien'],
   [/ has no files of its own$/, 'Eine Gruppe hat keine eigenen Dateien'],
+  [/ has to be in a group$/, 'Gehört in mindestens eine Gruppe'],
   [/^storage is external: say where/, 'Anderswo abgelegt: bitte die Fundstelle angeben'],
   [/^external only goes with storage: external$/, 'Eine Fundstelle gehört nur zu „Anderswo“'],
   [/ is not a group$/, 'Das ist keine Gruppe'],
@@ -167,12 +168,13 @@ export function groups(entries: Entry[], filter = ''): { type: EntryType; label:
     .filter((g) => g.entries.length > 0)
 }
 
-export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'location' | 'dates' | 'rule' | 'text' | 'files' | 'group' | 'other'
+export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'tags' | 'location' | 'dates' | 'rule' | 'text' | 'files' | 'group' | 'other'
 
 /** Sets one field. An empty value takes the field out of the entry. The text is the one thing it is based on, so nothing can clash. */
 export function setValue(entry: Entry, field: string, kind: FieldKind, value: unknown): string {
   let v: unknown = value
   if (kind === 'links') v = (value as { label: string; url: string }[]).filter((l) => l.label.trim() && l.url.trim())
+  if (kind === 'tags') v = [...new Set((value as string[]).map((t) => t.trim()).filter(Boolean))]
   if (kind === 'dates') v = (value as { start: string }[]).filter((d) => d.start)
   if (kind === 'rule') {
     const { rrule, start } = value as { rrule: string; start: string }
@@ -231,12 +233,16 @@ export interface NewContext {
   folder: string
   parent?: string
   kind?: string
+  /** An object: the group it is made in. */
+  group?: string
 }
 
 export interface NewOptions {
   /** The place a new place lies in. */
   parent?: string
   kind?: string
+  /** The group a new object is in (its `parents`). */
+  group?: string
   /** Whether an id is in use: if so, a number is put at the end of the name part (erika-mueller-2). */
   taken?: (id: string) => boolean
 }
@@ -261,11 +267,48 @@ export function newEntry(type: EntryType, label: string, folder = '', random?: (
   let id = idFor(slug)
   for (let n = 2; options.taken?.(id); n++) id = idFor(`${slug}-${n}`)
   const path = entryPath(type, id, t.class === 'content' ? topic : undefined)
-  const extra = `${options.kind && 'kind' in t.fields ? `kind: ${options.kind}\n` : ''}${options.parent && 'parent' in t.fields ? `parent: ${options.parent}\n` : ''}`
+  const extra = `${options.kind && 'kind' in t.fields ? `kind: ${options.kind}\n` : ''}${options.parent && 'parent' in t.fields ? `parent: ${options.parent}\n` : ''}${options.group && 'parents' in t.fields ? `parents:\n  - ${options.group}\n` : ''}`
   return makeEntry(path, `id: ${id}\ntype: ${type}\n${field}: ${quoted}\n${extra}`, undefined, '')
 }
 
 const typeAt = (dir: string): EntryType | undefined => (Object.keys(MODEL.types) as EntryType[]).find((t) => MODEL.types[t].class === 'entity' && MODEL.types[t].dir === dir)
+
+/** The objects as a tree of groups: a group is a root if it is in none; an object that is in no (existing) group is loose. One object can be in several groups. */
+export interface GroupIndex {
+  /** Every object by id. */
+  byId: Map<string, Entry>
+  /** The groups without a group above them. */
+  roots: Entry[]
+  /** Objects (not groups) that are in no group that exists. */
+  loose: Entry[]
+  /** The objects in a group, groups first, then by title. */
+  members: Map<string, Entry[]>
+  /** The groups an object is in. */
+  up: Map<string, string[]>
+}
+
+export const isGroup = (e: Entry): boolean => typeOf(e) === 'object' && e.data?.kind === 'group'
+
+export function groupIndex(entries: Entry[]): GroupIndex {
+  const objects = entries.filter((e) => typeOf(e) === 'object')
+  const byId = new Map(objects.map((e) => [idOf(e), e]))
+  const up = new Map<string, string[]>()
+  const members = new Map<string, Entry[]>()
+  const roots: Entry[] = []
+  const loose: Entry[] = []
+  for (const e of objects) {
+    const listed = Array.isArray(e.data?.parents) ? (e.data!.parents as unknown[]).filter((p): p is string => typeof p === 'string') : []
+    const parents = [...new Set(listed)].filter((id) => id !== idOf(e) && byId.get(id) && isGroup(byId.get(id)!))
+    up.set(idOf(e), parents)
+    if (parents.length === 0) (isGroup(e) && listed.length === 0 ? roots : loose).push(e)
+    for (const id of parents) members.set(id, [...(members.get(id) ?? []), e])
+  }
+  const order = (a: Entry, b: Entry) => Number(isGroup(b)) - Number(isGroup(a)) || titleOf(a).localeCompare(titleOf(b), 'de', { numeric: true })
+  for (const list of members.values()) list.sort(order)
+  roots.sort(order)
+  loose.sort(order)
+  return { byId, roots, loose, members, up }
+}
 
 /** A place that other places lie in: a locality, a street or a square. */
 export const holds = (e?: Entry): e is Entry => !!e && typeOf(e) === 'place' && ['locality', 'street', 'square'].includes(String(e.data?.kind))
@@ -302,6 +345,27 @@ export function shortName(name: string, parentName?: string): string {
     return /^\d/.test(rest) ? `Nr. ${rest}` : rest
   }
   return name
+}
+
+/**
+ * The address a building gets from where it lies: its name ("Gummern 3": the name of the place it is in, and a house number), the postal
+ * code of the nearest place above it that has one, and the name of that place ("Gummern 3, 29493 Schnackenburg"). Nothing for any other entry.
+ */
+export function autoAddress(entry: Entry, entries: readonly Entry[]): string | undefined {
+  const d = entry.data
+  if (typeOf(entry) !== 'place' || d?.kind !== 'building' || typeof d.name !== 'string' || typeof d.parent !== 'string') return undefined
+  const byId = new Map(entries.map((e) => [idOf(e), e]))
+  const parent = byId.get(d.parent)
+  const name = d.name.trim()
+  const parentName = typeof parent?.data?.name === 'string' ? parent.data.name : undefined
+  if (!parentName || !name.startsWith(`${parentName} `) || !/^\d/.test(name.slice(parentName.length + 1))) return undefined
+  const seen = new Set<string>()
+  for (let at = parent; at && !seen.has(idOf(at)); at = typeof at.data?.parent === 'string' ? byId.get(at.data.parent) : undefined) {
+    seen.add(idOf(at))
+    const code = at.data?.postal_code
+    if (typeof code === 'string' && code && typeof at.data?.name === 'string') return `${name}, ${code} ${at.data.name}`
+  }
+  return undefined
 }
 
 /** What renaming an entry does: the entries that move (with a new id and path), and the ones that stay and only get new references. */

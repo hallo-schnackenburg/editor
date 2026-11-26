@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { MODEL, setField, type TextRole } from '@editor/core'
-  import { excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
+  import { autoAddress, excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
   import RefField from './RefField.svelte'
   import LinksField from './LinksField.svelte'
+  import TagsField from './TagsField.svelte'
   import LocationField from './LocationField.svelte'
   import DatesField from './DatesField.svelte'
   import RuleField from './RuleField.svelte'
@@ -57,7 +58,23 @@
     if (result.ok) ws.edit(result.text)
   }
   const setPart = (name: string, part: string, value: unknown) => set(name, 'group', { ...(data(name) ?? {}), [part]: value })
+  /** The tags used anywhere (the internal ones are not suggested), the most used first. */
+  const tags = $derived.by(() => {
+    const count = new Map<string, number>()
+    for (const e of ws.entries) for (const t of Array.isArray(e.data?.tags) ? e.data.tags : []) if (typeof t === 'string' && !t.startsWith('_')) count.set(t, (count.get(t) ?? 0) + 1)
+    return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t)
+  })
   const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
+  /** The name of a building ("Gummern 3") makes its address, as long as the address is empty or was made like this before. */
+  function setName(name: string, value: string) {
+    const before = autoAddress(entry, ws.entries)
+    set(name, 'string', value)
+    const now = ws.selected
+    if (!now || now.path !== entry.path) return
+    const made = autoAddress(now, ws.entries)
+    const have = now.data?.address
+    if (made !== (typeof have === 'string' ? have : undefined) && (!have || have === before) && (made !== undefined || have === before)) ws.edit(setValue(now, 'address', 'string', made ?? ''))
+  }
   // An event that is not recurring has neither a schedule nor a rule: they go when "wiederkehrend" is switched off.
   function setFlag(name: string, on: boolean) {
     set(name, 'boolean', on)
@@ -147,7 +164,7 @@
           {#if kind === 'string' && (field as { multiline?: boolean }).multiline}
             <textarea id={`f-${name}`} rows="5" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)}></textarea>
           {:else if kind === 'string'}
-            <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
+            <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => (name === labelField && type === 'place' ? setName(name, event.currentTarget.value) : set(name, kind, event.currentTarget.value))} />
           {:else if kind === 'choice'}
             <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => (name === 'kind' && kinds ? setKind(event.currentTarget.value) : set(name, 'string', event.currentTarget.value))}>
               <option value="">–</option>
@@ -166,6 +183,8 @@
             {/if}
           {:else if kind === 'links'}
             <LinksField value={data(name) ?? []} onchange={(links) => set(name, kind, links)} />
+          {:else if kind === 'tags'}
+            <TagsField value={data(name) ?? []} suggestions={tags} onchange={(list) => set(name, kind, list)} />
           {:else if kind === 'location'}
             <LocationField value={data(name)} onchange={(value) => set(name, kind, value)} />
           {:else if kind === 'dates'}
@@ -239,8 +258,8 @@
   .req { color: var(--bad); }
   .issue { color: var(--bad); font-size: 13px; margin-top: 3px; }
   .field.bad input[type='text'], .field.bad input[type='date'], .field.bad select { border-color: var(--bad); }
-  .parts { display: flex; flex-direction: column; gap: 10px; padding-left: 12px; border-left: 2px solid var(--line); }
-  .part > label { display: block; font-weight: 500; margin-bottom: 3px; }
+  .parts { display: flex; flex-direction: column; gap: 10px; }
+  .part > label { display: block; font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
   .yaml { min-height: 28rem; }
   input[type='checkbox'] { width: auto; }
   select { width: auto; min-width: 12rem; }

@@ -3,8 +3,15 @@
   import { shownTitle, titleOf, typeOf } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
 
-  // What the submission that is worked on changes in the database, one line each; a click opens the entry.
-  let { ws, onopen }: { ws: Workspace; onopen: (path: string) => void } = $props()
+  // What the submission that is worked on changes in the database, one line each; a click marks the change in the details
+  // in the middle (the details have the way to the entry).
+  let { ws }: { ws: Workspace } = $props()
+  const review = $derived(ws.review)
+
+  function mark(path: string) {
+    review.detailOpen = true
+    review.focus = path
+  }
 
   /** The id of an entry as it shows in a list: its path without the type folder and the ending. */
   const idPart = (path = '') => path.split('/').slice(2).join('/').replace(/\.yaml$/, '')
@@ -18,8 +25,8 @@
   {#each ws.changes as change (change.kind + change.entry.path)}
     {@const type = typeOf(change.entry)}
     {@const missing = ws.problems.get(change.entry.path)}
-    <div class="item" class:on={ws.selectedPath === change.entry.path}>
-      <button class="open" disabled={change.kind === 'removed' || change.topic} onclick={() => onopen(change.entry.path)}>
+    <div class="item" class:on={review.focus === change.entry.path}>
+      <button class="open" onclick={() => mark(change.entry.path)}>
         <span class="what">
           <span class="t" class:gone={change.kind === 'removed'}>{shownTitle(change.entry)}</span>
           <span class="muted h">{change.topic ? 'Thema' : type ? MODEL.types[type].label : ''}{#if change.kind === 'renamed'} · {idPart(change.from)} → {idPart(change.entry.path)}{#if change.moved}, {change.moved} darunter{/if}{#if change.references}, {change.references} Verweis{change.references > 1 ? 'e' : ''}{/if}{/if}{#if missing} · {missing.join(', ')}{/if}</span>

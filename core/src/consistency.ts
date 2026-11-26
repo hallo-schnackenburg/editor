@@ -28,7 +28,7 @@ export function checkFiles(entry: unknown): Issue[] {
   return issues
 }
 
-type Kinds = Record<string, { label: string; subtypes: Record<string, string>; files: { roles?: readonly string[]; numbered?: boolean; min?: number; max?: number } }>
+type Kinds = Record<string, { label: string; subtypes: Record<string, string>; files: { roles?: readonly string[]; numbered?: boolean; min?: number; max?: number }; parents?: { min?: number } }>
 
 /**
  * What the kind of an object (its `kind`: image, document, ...) decides: the subtype, the fields that apply, and the files
@@ -45,6 +45,9 @@ export function checkObject(entry: unknown): Issue[] {
   for (const [name, spec] of Object.entries(model.fields as Record<string, { applies?: readonly string[] }>)) {
     if (spec.applies && !spec.applies.includes(entry.kind) && entry[name] !== undefined) issues.push({ path: `/${name}`, message: `does not apply to ${kind.label}` })
   }
+  const wanted = kind.parents?.min ?? 0
+  const parents = Array.isArray(entry.parents) ? entry.parents.length : 0
+  if (parents < wanted) issues.push({ path: '/parents', message: `${kind.label} has to be in a group` })
   const files = Array.isArray(entry.files) ? entry.files.filter(isObj) : []
   const external = entry.storage === 'external'
   if (external && !Array.isArray(entry.external)) issues.push({ path: '/external', message: 'storage is external: say where (external)' })

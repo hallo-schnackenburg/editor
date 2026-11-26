@@ -139,7 +139,7 @@ describe('nothing to wait for', () => {
     open()
     await start
     ws.stopLive()
-    expect(ws.entries).toHaveLength(7)
+    expect(ws.entries).toHaveLength(8)
   })
 
   it('forgets what it kept when somebody else signs in, and when the person signs out', async () => {

@@ -133,6 +133,7 @@ export function kindOf(spec) {
   const s = spec.schema
   if (Array.isArray(s.enum)) return 'choice'
   if (s.$ref === '#/$defs/links') return 'links'
+  if (s.$ref === '#/$defs/tags') return 'tags'
   if (s.$ref === '#/$defs/dates') return 'dates'
   if (s.$ref === '#/$defs/recurrence') return 'rule'
   if (s.$ref === '#/$defs/text') return 'text'
@@ -168,7 +169,7 @@ export function modelOf(model) {
         id: t.id,
         subtypes: subtypesOf(t),
         fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.max ? { max: f.max } : {}), ...(f.single ? { single: true } : {}), ...(f.options ? { options: f.options } : {}), ...(f.description ? { description: f.description } : {}), ...(f.multiline ? { multiline: true } : {}), ...(f.applies ? { applies: f.applies } : {}), ...(kindOf(f) === 'group' ? { parts: partsOf(f) } : {}) }])),
-        ...(t.kinds ? { kinds: Object.fromEntries(Object.entries(t.kinds).map(([kind, k]) => [kind, { label: k.label, subtypes: k.subtypes, files: k.files }])) } : {}),
+        ...(t.kinds ? { kinds: Object.fromEntries(Object.entries(t.kinds).map(([kind, k]) => [kind, { label: k.label, subtypes: k.subtypes, files: k.files, ...(k.parents ? { parents: k.parents } : {}) }])) } : {}),
       },
     ]),
   )

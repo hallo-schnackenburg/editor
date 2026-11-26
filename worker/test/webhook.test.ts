@@ -13,13 +13,17 @@ async function sign(body: string, secret = SECRET) {
 /** A hub that writes down what it is told. */
 function hub() {
   const told: unknown[] = []
+  const activity: unknown[] = []
   return {
     told,
+    activity,
     namespace: {
       idFromName: (name: string) => name,
       get: () => ({
         fetch: async (request: Request) => {
-          told.push(JSON.parse(await request.text()))
+          const body = JSON.parse(await request.text())
+          if (new URL(request.url).pathname === '/activity') activity.push(body)
+          else told.push(body)
           return new Response(null, { status: 204 })
         },
       }),
@@ -34,7 +38,7 @@ async function send(event: string, payload: object, { secret = SECRET, signature
     new Request('http://worker/api/hook/github', { method: 'POST', body, headers: { 'x-github-event': event, 'x-hub-signature-256': signature ?? (await sign(body, secret)) } }),
     { ...baseEnv, WEBHOOK_SECRET: SECRET, HUB: h.namespace },
   )
-  return { status: response.status, told: h.told }
+  return { status: response.status, told: h.told, activity: h.activity }
 }
 
 describe('the webhook', () => {
@@ -51,7 +55,7 @@ describe('the webhook', () => {
   })
 
   it('tells that the base branch moved', async () => {
-    expect(await send('push', { ref: 'refs/heads/main', after: 'abc' })).toEqual({ status: 204, told: [{ type: 'push', ref: 'refs/heads/main', head: 'abc' }] })
+    expect(await send('push', { ref: 'refs/heads/main', after: 'abc' })).toEqual({ status: 204, told: [{ type: 'push', ref: 'refs/heads/main', head: 'abc' }], activity: [] })
   })
 
   it('tells that a submission changed: commit, pull request, check, comment', async () => {
@@ -71,9 +75,9 @@ describe('the webhook', () => {
       ['star', {}],
     ] as const) {
       const result = await send(event, payload)
-      expect(result, event).toEqual({ status: 202, told: [] })
+      expect(result, event).toEqual({ status: 202, told: [], activity: [] })
     }
-    expect(await send('push', { repository: { full_name: 'x/y' }, ref: 'refs/heads/main', after: 'a' })).toEqual({ status: 202, told: [] })
+    expect(await send('push', { repository: { full_name: 'x/y' }, ref: 'refs/heads/main', after: 'a' })).toEqual({ status: 202, told: [], activity: [] })
   })
 })
 

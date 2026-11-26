@@ -4,12 +4,14 @@
   import type { Submission } from './api.js'
 
   // The submissions that can still be changed, in one list, and the database (the main branch) above them. A click makes one the one
-  // that is worked on (its details show in the middle, and it opens here: what it changes, and what can be done with it).
-  let { ws, onopen, onopenchange }: { ws: Workspace; onopen?: () => void; onopenchange: (path: string) => void } = $props()
+  // that is worked on (its details show in the middle, and it opens here: what it changes, and what can be done with it); another click on it folds what is below it away, the next unfolds it.
+  let { ws, onopen }: { ws: Workspace; onopen?: () => void } = $props()
   const review = $derived(ws.review)
 
   let asking = $state<'merge' | 'close'>()
   let renaming = $state(false)
+  /** Whether the changes of the active submission are folded away. */
+  let folded = $state(false)
   let name = $state('')
 
   const when = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { dateStyle: 'short' })
@@ -20,12 +22,17 @@
     void ws.active?.number
     asking = undefined
     renaming = false
+    folded = false
   })
 
   async function pick(submission: Submission) {
+    // The active one is a switch for what is shown below its card (the changes and what can be done): the details in the middle stay.
+    if (ws.active?.number === submission.number) {
+      folded = !folded
+      return
+    }
     onopen?.()
-    if (ws.active?.number === submission.number) review.detailOpen = true
-    else await ws.work(submission)
+    await ws.work(submission)
   }
 
   async function pickMain() {
@@ -65,8 +72,8 @@
           <span class="name">{submission.name}</span>
           <span class="meta muted"><span>{submission.author} · {when(submission.updated)}</span>{#if submission.state === 'draft'}<span>Entwurf</span>{/if}</span>
         </button>
-        {#if current}
-          <ChangesPane {ws} onopen={onopenchange} />
+        {#if current && !folded}
+          <ChangesPane {ws} />
           <div class="actions">
             {#if renaming}
               <form onsubmit={rename}>

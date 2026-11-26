@@ -20,9 +20,13 @@ Bei Objekten ist „Datei“ das, was im Store liegt, und „Objekt“ die Besch
 - **Gruppen**: `parents` am Mitglied nennt die Gruppen. Eine Gruppe kann in Gruppen liegen, aber nicht in sich selbst, auch nicht über andere.
 - **Datum**: EDTF (`1963`, `1963-07`, `196X`, `1960/1969`, `1963?`).
 
-## Stubs
+## Tags
 
-Eine Entität, die der Chat nur aus einem Namen anlegt, bekommt `stub: true` („Unvollständig“). Wer sie vervollständigt, nimmt die Markierung heraus. Der Chat sucht erst, fragt bei mehreren Treffern und legt nur an, wenn nichts passt.
+Jeder Eintrag kann `tags` haben: freie Schlagworte (Text ohne Komma, höchstens 60 Zeichen, jedes nur einmal). Ein Tag, das mit einem Unterstrich beginnt, ist intern und gehört dem Editor: `_stub` markiert eine Entität, die der Chat nur aus einem Namen angelegt hat. Wer sie vervollständigt, nimmt das Tag heraus. Die Tags stehen im Index, damit Listen und Vorschläge ohne das Lesen der Dateien auskommen.
+
+## Anlegen durch den Chat
+
+Der Chat sucht erst, fragt bei mehreren Treffern und legt nur an, wenn nichts passt.
 
 ## Wo geprüft wird
 

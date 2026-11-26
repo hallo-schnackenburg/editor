@@ -51,23 +51,31 @@ describe('the kind of an object', () => {
 
   it('decides which fields apply', () => {
     expect(checkObject({ ...photo(), language: 'de' })).toEqual([{ path: '/language', message: 'does not apply to Bild' }])
-    expect(checkObject({ type: 'object', kind: 'document', language: 'de', alt: 'x' }).map((i) => i.path)).toEqual(['/alt'])
+    expect(checkObject({ type: 'object', kind: 'document', parents: ['g'], language: 'de', alt: 'x' }).map((i) => i.path)).toEqual(['/alt'])
   })
 
   it('decides the roles, the numbers and the count of the files', () => {
     const file = photo().files[0]
     expect(checkObject({ ...photo(), files: [{ ...file, role: 'page' }] })[0].path).toBe('/files/0/role')
     expect(checkObject({ ...photo(), files: [file, file] })).toEqual([{ path: '/files', message: 'Bild has at most 1 file' }])
-    expect(checkObject({ type: 'object', kind: 'document', files: [{ ...file, role: 'page' }] })).toEqual([{ path: '/files/0/num', message: 'the pages are numbered (num)' }])
+    expect(checkObject({ type: 'object', kind: 'document', parents: ['g'], files: [{ ...file, role: 'page' }] })).toEqual([{ path: '/files/0/num', message: 'the pages are numbered (num)' }])
     expect(checkObject({ type: 'object', kind: 'group', files: [file] })[0].message).toMatch(/no files of its own/)
   })
 
+  it('is in a group, unless it is a group (a group without parents is a root)', () => {
+    const { parents: _, ...loose } = photo()
+    expect(checkObject(loose)).toEqual([{ path: '/parents', message: 'Bild has to be in a group' }])
+    expect(checkObject({ ...loose, parents: [] })[0].path).toBe('/parents')
+    expect(checkObject({ type: 'object', kind: 'group' })).toEqual([])
+    expect(checkObject({ type: 'object', kind: 'group', parents: ['root'] })).toEqual([])
+  })
+
   it('wants the place when the content is kept elsewhere, and only then', () => {
-    expect(checkObject({ type: 'object', kind: 'image', storage: 'external' })).toEqual([{ path: '/external', message: 'storage is external: say where (external)' }])
-    expect(checkObject({ type: 'object', kind: 'image', external: [{ site: 'Arcinsys' }] })[0].path).toBe('/external')
+    expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], storage: 'external' })).toEqual([{ path: '/external', message: 'storage is external: say where (external)' }])
+    expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], external: [{ site: 'Arcinsys' }] })[0].path).toBe('/external')
     const file = photo().files[0]
-    expect(checkObject({ type: 'object', kind: 'image', storage: 'external', external: [{ site: 'Arcinsys' }], files: [{ ...file, role: 'thumbnail' }] })).toEqual([])
-    expect(checkObject({ type: 'object', kind: 'image', storage: 'external', external: [{ site: 'Arcinsys' }], files: [file] })[0].path).toBe('/files/0/role')
+    expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], storage: 'external', external: [{ site: 'Arcinsys' }], files: [{ ...file, role: 'thumbnail' }] })).toEqual([])
+    expect(checkObject({ type: 'object', kind: 'image', parents: ['g'], storage: 'external', external: [{ site: 'Arcinsys' }], files: [file] })[0].path).toBe('/files/0/role')
   })
 })
 

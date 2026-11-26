@@ -209,11 +209,11 @@ describe('making an entry', () => {
     expect(texts(ws)).toEqual(['user: Lege die Alte Fähre an', 'status: Ort „Alte Fähre“ angelegt.', 'status: Beschreibung geändert.', 'status: Typ geändert.'])
   })
 
-  it('marks an entity that is made from a name only as incomplete (a stub), and one with a description not', async () => {
+  it('gives an entity that is made from a name only the internal tag _stub, and one with a description not', async () => {
     const ws = await started(new Scripted([{ tool: 'create_entry', type: 'person', name: 'Max Ketterer' }, { tool: 'create_entry', type: 'place', name: 'Leipzig', fields: { description: 'Eine Stadt.' } }]))
     await ws.send('Lege beide an')
-    expect(ws.entries.find((e) => e.path === 'entities/people/max-ketterer.yaml')!.data).toMatchObject({ name: 'Max Ketterer', stub: true })
-    expect(ws.entries.find((e) => e.path === 'entities/places/leipzig.yaml')!.data?.stub).toBeUndefined()
+    expect(ws.entries.find((e) => e.path === 'entities/people/max-ketterer.yaml')!.data).toMatchObject({ name: 'Max Ketterer', tags: ['_stub'] })
+    expect(ws.entries.find((e) => e.path === 'entities/places/leipzig.yaml')!.data?.tags).toBeUndefined()
   })
 
   it('numbers an id that is in use, and says when it cannot (a content without a topic)', async () => {

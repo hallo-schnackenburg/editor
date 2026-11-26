@@ -3,6 +3,7 @@
 
 import type { IndexEntry, Issue } from '@editor/core'
 import { Live, liveUrl, type News } from './live.js'
+import type { ActivityEvent, Doing, TeamMessage } from './team.js'
 import type { FileEntry } from './prepare.js'
 import { S3Store, type UploadResult, type Variants } from './uploader.js'
 
@@ -89,6 +90,8 @@ export interface SubmissionRef {
 export interface Listener {
   stop(): void
   nudge(): void
+  /** Says what the person works on (presence). */
+  say(doing: Doing): void
 }
 
 export interface Api {
@@ -121,8 +124,16 @@ export interface Api {
   rename(number: number, name: string): Promise<void>
   comments(number: number): Promise<Comment[]>
   comment(number: number, body: string): Promise<Comment>
+  /** Changes the text of a comment (only the person's own). */
+  editComment(number: number, id: number, body: string): Promise<Comment>
+  /** Removes a comment (only the person's own). */
+  removeComment(number: number, id: number): Promise<void>
   /** Tells about news (see live.ts); `onOpen` says whether the connection is there. */
-  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void): Listener
+  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void, onTeam?: (message: TeamMessage) => void): Listener
+  /** The newest lines of the activity stream (those before the line `before` if given), and the id up to which the person has read. */
+  activity(before?: number): Promise<{ events: ActivityEvent[]; seen: number }>
+  /** The person has read the stream up to this line. */
+  seen(upto: number): Promise<void>
   logout(): Promise<void>
 }
 
@@ -242,10 +253,26 @@ export class HttpApi implements Api {
     return this.send('POST', `/repo/submissions/${number}/comments`, { body })
   }
 
-  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void): Listener {
-    const live = new Live(liveUrl(this.base, window.location.href), onNews, onOpen)
+  editComment(number: number, id: number, body: string): Promise<Comment> {
+    return this.send('PATCH', `/repo/submissions/${number}/comments/${id}`, { body })
+  }
+
+  async removeComment(number: number, id: number): Promise<void> {
+    await this.send('DELETE', `/repo/submissions/${number}/comments/${id}`)
+  }
+
+  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void, onTeam?: (message: TeamMessage) => void): Listener {
+    const live = new Live(liveUrl(this.base, window.location.href), onNews, onOpen, undefined, onTeam)
     live.start()
-    return { stop: () => live.stop(), nudge: () => live.nudge() }
+    return { stop: () => live.stop(), nudge: () => live.nudge(), say: (doing) => live.say(doing) }
+  }
+
+  activity(before?: number): Promise<{ events: ActivityEvent[]; seen: number }> {
+    return this.call(`/activity${before ? `?before=${before}` : ''}`).then((r) => this.json(r))
+  }
+
+  async seen(upto: number): Promise<void> {
+    await this.send('POST', '/activity/seen', { upto })
   }
 
   async logout(): Promise<void> {

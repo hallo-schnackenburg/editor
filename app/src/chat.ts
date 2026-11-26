@@ -7,7 +7,7 @@
 import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
-import { idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'
+import { autoAddress, idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'
 import type { FileEntry } from './prepare.js'
 import type { Workspace } from './workspace.svelte.js'
 
@@ -75,6 +75,11 @@ function fitted(def: FieldDef, value: unknown, ids: Set<string>): { value: unkno
       const missing = list.find((id) => !ids.has(id))
       if (missing !== undefined) return no(`Den Eintrag „${missing}“ gibt es nicht.`)
       return { value: def.single ? list[0] : list }
+    }
+    case 'tags': {
+      const list = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+      const good = list.filter((t): t is string => typeof t === 'string' && /^[^\s,](?:[^,]*[^\s,])?$/.test(t.trim()) && t.trim().length <= 60).map((t) => t.trim())
+      return good.length === list.length ? { value: [...new Set(good)] } : no('Jeder Tag ist ein kurzer Text ohne Komma.')
     }
     case 'links': {
       const links = Array.isArray(value) ? value : []
@@ -347,9 +352,13 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         note(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
         for (const [field, value] of Object.entries(call.fields ?? {})) patch(path, field, value, undefined, true)
         if (call.type === 'object' && call.files?.length) attach(path, call.files)
-        // An entity the chat makes from a name only is a stub, to be completed: marked, so that it can be found later.
+        // A building named like "Gummern 3" in a place gets its address from there (unless the chat gave one).
+        const placed = ws.entries.find((e) => e.path === path)
+        const address = placed && !('address' in (call.fields ?? {})) ? autoAddress(placed, ws.entries) : undefined
+        if (placed && address) ws.edit(setValue(placed, 'address', 'string', address))
+        // An entity the chat makes from a name only is to be completed: it gets the internal tag _stub, so that it can be found later.
         const made = ws.entries.find((e) => e.path === path)
-        if (made && MODEL.types[call.type].class === 'entity' && 'stub' in MODEL.types[call.type].fields && !('description' in (call.fields ?? {}))) ws.edit(setValue(made, 'stub', 'boolean', true))
+        if (made && MODEL.types[call.type].class === 'entity' && 'tags' in MODEL.types[call.type].fields && !('description' in (call.fields ?? {})) && !('tags' in (call.fields ?? {}))) ws.edit(setValue(made, 'tags', 'tags', ['_stub']))
         return undefined
       }
       case 'attach_files': {

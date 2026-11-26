@@ -155,7 +155,33 @@ describe('submitting, accepting, closing', () => {
   })
 })
 
+const send = async (s: { gh: ReturnType<typeof fakeGitHub>; cookie: string }, method: string, path: string, data?: unknown) => {
+  const response = await handle(request(s.cookie, `/api/repo/submissions${path}`, { method, body: data === undefined ? undefined : JSON.stringify(data) }), env, s.gh.fn)
+  return { status: response.status, body: response.status === 204 ? undefined : ((await response.json()) as any) }
+}
+
 describe('comments', () => {
+  it('are changed and removed by their author', async () => {
+    const s = await started()
+    const { id } = (await post(s, '/1/comments', { body: 'Erster Stand.' })).body
+    const changed = await send(s, 'PATCH', `/1/comments/${id}`, { body: '  Neuer Stand.  ' })
+    expect(changed.status).toBe(200)
+    expect(changed.body).toMatchObject({ id, body: 'Neuer Stand.', author: 'anna' })
+    expect((await send(s, 'PATCH', `/1/comments/${id}`, { body: ' ' })).status).toBe(400)
+    expect((await send(s, 'DELETE', `/1/comments/${id}`)).status).toBe(204)
+    expect((await get(s, '/1/comments')).body.comments).toEqual([])
+    expect((await send(s, 'DELETE', `/1/comments/${id}`)).status).toBe(404)
+  })
+
+  it('are not changed or removed by somebody else', async () => {
+    const s = await started()
+    s.gh.options.commenter = 'ben'
+    const { id } = (await post(s, '/1/comments', { body: 'Von Ben.' })).body
+    expect((await send(s, 'PATCH', `/1/comments/${id}`, { body: 'x' })).status).toBe(403)
+    expect((await send(s, 'DELETE', `/1/comments/${id}`)).status).toBe(403)
+    expect((await get(s, '/1/comments')).body.comments.map((c: any) => c.body)).toEqual(['Von Ben.'])
+  })
+
   it('are read and written, oldest first, and the author is the person', async () => {
     const s = await started()
     expect((await get(s, '/1/comments')).body.comments).toEqual([])

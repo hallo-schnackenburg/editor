@@ -3,6 +3,9 @@
 // If the connection breaks it is opened again, with growing pauses. Whoever uses it has to make sure
 // by other means (polling) that nothing is missed while it is closed: every time it opens, `onNews`
 // is called once, because something may have happened meanwhile.
+// What the hub tells about the team (who is there, what the team did: team.ts) is not news; it goes to `onTeam`.
+
+import { teamOf, type Doing, type TeamMessage } from './team.js'
 
 /** What the Worker tells: `push` (the database changed), `pull` (a submission changed), `comment` (a comment on a submission). No `type` for news that is not understood. */
 export interface News {
@@ -59,6 +62,8 @@ export class Live {
   #url: string
   #onNews: (news?: News) => void
   #onState: (open: boolean) => void
+  #onTeam: (message: TeamMessage) => void
+  #doing: Doing | undefined
   #connect: (url: string) => Socket
   #socket: Socket | undefined
   #tries = 0
@@ -67,11 +72,23 @@ export class Live {
   #pong: ReturnType<typeof setTimeout> | undefined
   #wanted = false
 
-  constructor(url: string, onNews: (news?: News) => void, onState: (open: boolean) => void = () => {}, connect: (url: string) => Socket = (u) => new WebSocket(u) as unknown as Socket) {
+  constructor(url: string, onNews: (news?: News) => void, onState: (open: boolean) => void = () => {}, connect: (url: string) => Socket = (u) => new WebSocket(u) as unknown as Socket, onTeam: (message: TeamMessage) => void = () => {}) {
     this.#url = url
     this.#onNews = onNews
     this.#onState = onState
     this.#connect = connect
+    this.#onTeam = onTeam
+  }
+
+  /** Says what the person works on (it is said again when the connection is made anew); nothing: they are only there. */
+  say(doing: Doing): void {
+    this.#doing = doing
+    if (!this.open) return
+    try {
+      this.#socket?.send(JSON.stringify({ type: 'presence', ...doing }))
+    } catch {
+      // the close that follows is handled there
+    }
   }
 
   start(): void {
@@ -108,13 +125,16 @@ export class Live {
         }
         this.#pong ??= setTimeout(() => lost(), PONG_MS)
       }, PING_MS)
+      if (this.#doing) socket.send(JSON.stringify({ type: 'presence', ...this.#doing }))
       this.#onNews() // something may have happened while there was no connection
     }
     socket.onmessage = (event) => {
       clearTimeout(this.#pong) // it is alive
       this.#pong = undefined
       if (event.data === 'pong') return
-      this.#onNews(newsOf(event.data))
+      const team = teamOf(event.data)
+      if (team) this.#onTeam(team)
+      else this.#onNews(newsOf(event.data))
     }
     const lost = () => {
       if (this.#socket !== socket) return // an old connection

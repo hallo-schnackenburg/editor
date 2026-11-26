@@ -26,11 +26,14 @@ export interface IndexEntry {
   date?: string
   /** What tells entries of one type apart in a list: the day a content was published, the address of a place. */
   hint?: string
+  /** A place: its postal code (the places below it take it from the nearest above that has one). */
+  postal?: string
   /** An event that repeats by a rule. */
   recurring?: true
   /** The ids the entry refers to: who refers to an entry is found here, without reading the files. */
   refs?: string[]
-  stub?: true
+  /** The tags of the entry (those that start with an underscore are internal). */
+  tags?: string[]
 }
 
 export interface RepoIndex {
@@ -58,10 +61,14 @@ export function indexEntry(file: RepoFile, sha: string): IndexEntry | undefined 
   if (parents.length > 0) entry.parents = parents
   const hint = text(data.type === 'content' ? data.published : data.type === 'place' ? data.address : undefined)
   if (hint) entry.hint = hint
+  if (data.type === 'place' && typeof data.postal_code === 'string' && data.postal_code) entry.postal = data.postal_code
   if (data.recurring === true) entry.recurring = true
   const refs = refsOf(data)
   if (refs.length > 0) entry.refs = refs
-  if (data.stub === true) entry.stub = true
+  if (Array.isArray(data.tags)) {
+    const tags = data.tags.filter((t): t is string => typeof t === 'string')
+    if (tags.length > 0) entry.tags = tags
+  }
   return entry
 }
 

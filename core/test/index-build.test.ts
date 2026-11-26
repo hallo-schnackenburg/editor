@@ -22,8 +22,8 @@ describe('index', () => {
   })
 
   it('names the entry by name or title and keeps what the tree needs', () => {
-    const erika = indexEntry({ path: 'entities/people/erika-mustermann.yaml', text: 'id: erika-mustermann\ntype: person\nname: Erika Mustermann\nstub: true\n' }, 'x')
-    expect(erika).toMatchObject({ id: 'erika-mustermann', type: 'person', title: 'Erika Mustermann', stub: true })
+    const erika = indexEntry({ path: 'entities/people/erika-mustermann.yaml', text: 'id: erika-mustermann\ntype: person\nname: Erika Mustermann\ntags:\n  - _stub\n  - Chor\n' }, 'x')
+    expect(erika).toMatchObject({ id: 'erika-mustermann', type: 'person', title: 'Erika Mustermann', tags: ['_stub', 'Chor'] })
     const object = indexEntry({
       path: 'objects/ae/01kb4z8m3q7xv2n5r6t9c0d1ae.yaml',
       text: 'id: 01kb4z8m3q7xv2n5r6t9c0d1ae\ntype: object\nkind: image\nsubtype: photo\ntitle: Fähre\ndate: "1952"\nparents: [01kb4z8m3q7xv2n5r6t9c0d1aa]\n',
@@ -51,5 +51,10 @@ describe('index', () => {
   it('leaves out what is not ours or not YAML', () => {
     expect(indexEntry({ path: 'README.md', text: '# x' }, 'x')).toBeUndefined()
     expect(indexEntry({ path: 'entities/people/x.yaml', text: ': : :' }, 'x')).toBeUndefined()
+  })
+
+  it('has the postal code of a place', () => {
+    const place = indexEntry({ path: 'entities/places/schnackenburg.yaml', text: 'id: schnackenburg\ntype: place\nname: Schnackenburg\nkind: locality\npostal_code: "29493"\n' }, 'x')
+    expect(place).toMatchObject({ postal: '29493' })
   })
 })

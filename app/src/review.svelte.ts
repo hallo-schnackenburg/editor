@@ -28,6 +28,8 @@ export class Review {
   selected = $state<number>()
   /** Its details are shown in the middle (instead of an entry). */
   detailOpen = $state(false)
+  /** The path of the change that is marked in the details (a click on it in the list on the right). */
+  focus = $state<string>()
   /** What GitHub said of the submission: the checks, and the entries as long as the workspace does not have them. */
   #remote = $state.raw<SubmissionDetail>()
   /** What the submission does: the entries are the workspace's own (no waiting), the rest is GitHub's, as far as it was read. */
@@ -93,6 +95,7 @@ export class Review {
 
   async select(number: number | undefined): Promise<void> {
     this.selected = number
+    this.focus = undefined
     this.error = ''
     if (number === undefined) {
       this.#remote = undefined
@@ -173,6 +176,34 @@ export class Review {
       await this.#api.rename(submission.number, name)
       await this.#host.loadSubmissions()
       if (this.selected === submission.number) await this.#reload(submission.number, { quiet: true })
+      return true
+    } catch (error) {
+      if (error instanceof SignedOut) this.#host.signedOut()
+      else this.error = (error as Error).message
+      return false
+    }
+  }
+
+  async editComment(id: number, body: string): Promise<boolean> {
+    const number = this.selected
+    if (number === undefined || !body.trim()) return false
+    try {
+      const comment = await this.#api.editComment(number, id, body)
+      if (this.selected === number) this.comments = this.comments.map((c) => (c.id === id ? comment : c))
+      return true
+    } catch (error) {
+      if (error instanceof SignedOut) this.#host.signedOut()
+      else this.error = (error as Error).message
+      return false
+    }
+  }
+
+  async removeComment(id: number): Promise<boolean> {
+    const number = this.selected
+    if (number === undefined) return false
+    try {
+      await this.#api.removeComment(number, id)
+      if (this.selected === number) this.comments = this.comments.filter((c) => c.id !== id)
       return true
     } catch (error) {
       if (error instanceof SignedOut) this.#host.signedOut()

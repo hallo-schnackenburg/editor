@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Workspace } from './workspace.svelte.js'
   import Browse from './Browse.svelte'
+  import Team from './Team.svelte'
+  import Active from './Active.svelte'
 
   let { ws }: { ws: Workspace } = $props()
 
@@ -8,6 +10,14 @@
   $effect(() => {
     void [ws.branch, ws.review.detailOpen, ws.selectedPath]
     ws.rememberView()
+  })
+
+  // What the person works on is told to the others (the hub only passes it on when it changes), and now and then again so that nobody counts as away.
+  $effect(() => {
+    void [ws.branch, ws.selectedPath]
+    ws.reportPresence()
+    const again = setInterval(() => ws.reportPresence(), 20_000)
+    return () => clearInterval(again)
   })
 
   $effect(() => {
@@ -23,7 +33,9 @@
 <div class="app">
   <header>
     <strong>Contents Editor</strong>
+    <Active {ws} />
     <span class="spacer"></span>
+    <Team {ws} />
     {#if ws.saving}<span class="muted">Speichert ...</span>{/if}
     {#if ws.reading}<span class="muted">Liest Einträge ...</span>{/if}
     <span class="live" class:on={ws.liveOpen} title={ws.liveOpen ? 'Live verbunden' : 'Keine Live-Verbindung: es wird alle Minute nachgefragt.'}>●</span>

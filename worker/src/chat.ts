@@ -176,7 +176,9 @@ function describeField(name: string, field: FieldDef): string {
       ? `one of: ${Object.entries(field.options).map(([key, label]) => `${key} (${label})`).join(', ')}`
       : field.kind === 'ref'
         ? `${field.single ? 'one id' : 'a list of ids'} of ${(field.ref ?? []).join(' or ')}`
-        : field.kind === 'links'
+        : field.kind === 'tags'
+          ? 'a list of short texts (keywords); those starting with an underscore are internal and set by the editor'
+          : field.kind === 'links'
           ? 'a list of {label, url}'
           : field.kind === 'location'
             ? '{lat, lon}'

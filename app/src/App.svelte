@@ -4,12 +4,29 @@
   import type { Api } from './api.js'
   import { defaultStore } from './known.js'
   import { defaultTextStore } from './texts.js'
+  import { parseRoute } from './route.js'
   import { Workspace } from './workspace.svelte.js'
   import Main from './Main.svelte'
   import { TabLock } from './tablock.svelte.js'
 
   let { api, agent }: { api: Api; agent?: Agent } = $props()
   const ws = new Workspace(untrack(() => api), untrack(() => agent), defaultStore(), defaultTextStore())
+  // The address decides where the person starts. GitHub sends the browser back to the bare address after the sign-in: the one from before is kept for that.
+  const REMEMBERED = 'contents-editor:address'
+  try {
+    if (location.hash.length > 1) sessionStorage.setItem(REMEMBERED, location.hash)
+  } catch {
+    // not kept: the person starts where they were last
+  }
+  ws.route = parseRoute(location.hash) ?? parseRoute(recalled())
+  function recalled(): string | null {
+    try {
+      return sessionStorage.getItem(REMEMBERED)
+    } catch {
+      return null
+    }
+  }
+
   // Only one tab works at a time (tablock.svelte.ts): two would keep their own copies and save over each other. The others say so.
   const lock = new TabLock()
   onMount(() => lock.start())

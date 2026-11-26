@@ -5,6 +5,7 @@
 
 import { FOLDER_PATH, authorOf, indexEntry, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@editor/core'
 import type { FileEntry } from './prepare.js'
+import type { ActivityEvent, Doing, TeamMessage } from './team.js'
 import { FakeStore, type UploadResult, type Variants } from './uploader.js'
 import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type IndexResult, type RemoteEntry, type Listener, type News, type User } from './api.js'
 
@@ -204,16 +205,51 @@ export class FakeApi implements Api {
 
   async comment(number: number, body: string): Promise<Comment> {
     const p = this.pull(number)
-    const comment = { id: p.comments.length + 1, author: 'anna', avatar: '', body: body.trim(), created: new Date().toISOString() }
+    const comment = { id: Math.max(0, ...p.comments.map((c) => c.id)) + 1, author: 'anna', avatar: '', body: body.trim(), created: new Date().toISOString() }
     p.comments = [...p.comments, comment]
     this.tell({ type: 'comment', number })
     return comment
   }
 
-  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void): Listener {
+  async editComment(number: number, id: number, body: string): Promise<Comment> {
+    const p = this.pull(number)
+    const old = p.comments.find((c) => c.id === id)
+    if (!old) throw new ApiError('Diesen Kommentar gibt es nicht.', 404)
+    if (old.author !== 'anna') throw new ApiError('Du kannst nur deine eigenen Kommentare ändern.', 403)
+    const comment = { ...old, body: body.trim() }
+    p.comments = p.comments.map((c) => (c.id === id ? comment : c))
+    this.tell({ type: 'comment', number })
+    return comment
+  }
+
+  async removeComment(number: number, id: number): Promise<void> {
+    const p = this.pull(number)
+    const old = p.comments.find((c) => c.id === id)
+    if (!old) throw new ApiError('Diesen Kommentar gibt es nicht.', 404)
+    if (old.author !== 'anna') throw new ApiError('Du kannst nur deine eigenen Kommentare ändern.', 403)
+    p.comments = p.comments.filter((c) => c.id !== id)
+    this.tell({ type: 'comment', number })
+  }
+
+  /** What the person said about what they work on, last. */
+  doing: Doing | undefined
+  stream: ActivityEvent[] = []
+  readUpto = 0
+  team?: (message: TeamMessage) => void
+
+  listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void, onTeam?: (message: TeamMessage) => void): Listener {
     this.listeners.add(onNews)
+    this.team = onTeam
     onOpen(true)
-    return { stop: () => this.listeners.delete(onNews), nudge: () => undefined }
+    return { stop: () => this.listeners.delete(onNews), nudge: () => undefined, say: (doing) => (this.doing = doing) }
+  }
+
+  async activity(): Promise<{ events: ActivityEvent[]; seen: number }> {
+    return { events: [...this.stream].sort((a, b) => b.id - a.id), seen: this.readUpto }
+  }
+
+  async seen(upto: number): Promise<void> {
+    this.readUpto = Math.max(this.readUpto, upto)
   }
 
   async logout(): Promise<void> {}

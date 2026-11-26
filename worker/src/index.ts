@@ -17,6 +17,7 @@ import { handleUpload, type UploadEnv } from './upload.js'
 import { hubOf, type HubNamespace } from './hub.js'
 import { handleRepo } from './repo.js'
 import type { Auth } from './session.js'
+import { handleActivity } from './activity-api.js'
 import { handleHook } from './webhook.js'
 
 export { Hub } from './hub.js'
@@ -74,19 +75,24 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
 }
 
 async function signedRoute(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response> {
-  if (route === '/live' && request.method === 'GET') return live(request, env)
+  if (route === '/live' && request.method === 'GET') return live(request, env, session)
   const response =
-    (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleSubmissions(request, route, session, env, fetchFn)) ?? (await handleUpload(request, route, env, fetchFn)) ?? (await handleChat(request, route, env, fetchFn))
+    (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleSubmissions(request, route, session, env, fetchFn)) ?? (await handleUpload(request, route, env, fetchFn)) ?? (await handleActivity(request, route, session, env)) ?? (await handleChat(request, route, env, fetchFn))
   return response ?? json({ error: 'Not found.' }, 404, env)
 }
 
 /** The WebSocket on which the browser hears that something changed (see hub.ts). */
-async function live(request: Request, env: Env): Promise<Response> {
+async function live(request: Request, env: Env, session: Auth): Promise<Response> {
   if (!env.HUB) return json({ error: 'The server has no hub (HUB).' }, 503, env)
   if (request.headers.get('upgrade') !== 'websocket') return json({ error: 'Expected a WebSocket.' }, 426, env)
   // A WebSocket is not held back by the browser's cross-origin rules: only our own app may open one.
   if (!env.ALLOWED_ORIGIN || request.headers.get('origin') !== env.ALLOWED_ORIGIN) return json({ error: 'Wrong origin.' }, 403, env)
-  return hubOf(env.HUB).fetch(request)
+  // The hub is told who it is by us (from the session): what the browser sends in these headers is dropped.
+  const headers = new Headers(request.headers)
+  headers.set('x-login', session.login)
+  headers.set('x-name', session.name)
+  headers.set('x-avatar', session.avatar)
+  return hubOf(env.HUB).fetch(new Request(request, { headers }))
 }
 
 export default {

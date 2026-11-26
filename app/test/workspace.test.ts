@@ -27,7 +27,7 @@ describe('starting', () => {
   it('loads the database and the submissions once somebody is signed in; changes can be made at once', async () => {
     const ws = await started()
     expect(ws.user?.login).toBe('anna')
-    expect(ws.entries).toHaveLength(7)
+    expect(ws.entries).toHaveLength(8)
     expect(ws.submissions.map((c) => [c.name, c.author, c.state])).toEqual([['Feuerwehr Texte', 'bernd', 'submitted']])
     expect(ws.branch).toBeUndefined()
     expect(ws.editable).toBe(true)
@@ -76,7 +76,7 @@ describe('the changes', () => {
     expect(ws.draft).toBeDefined()
     await ws.discard('entities/events/osterfeuer.yaml')
     expect(ws.changes).toEqual([])
-    expect(ws.entries).toHaveLength(7)
+    expect(ws.entries).toHaveLength(8)
     expect(titleOf(ws.entries.find((e) => e.path === ERIKA)!)).toBe('Erika Mustermann')
     expect(ws.draft).toBeUndefined() // nothing left to propose: the draft is closed
   })
@@ -91,7 +91,7 @@ describe('the changes', () => {
     ws.create('person', 'Neu')
     ws.revert()
     expect(ws.selected).toBeUndefined()
-    expect(ws.entries).toHaveLength(7)
+    expect(ws.entries).toHaveLength(8)
   })
 
   it('say what is wrong while it is wrong', async () => {
@@ -365,7 +365,7 @@ describe('news', () => {
     vi.useFakeTimers()
     try {
       const api = new FakeApi()
-      api.listen = () => ({ stop: () => undefined, nudge: () => undefined })
+      api.listen = () => ({ stop: () => undefined, nudge: () => undefined, say: () => undefined })
       const ws = new Workspace(api)
       await ws.start()
       const submissions = vi.spyOn(api, 'submissions')

@@ -45,16 +45,16 @@ export const MODEL = {
           "required": false,
           "multiline": true
         },
-        "stub": {
-          "label": "Unvollständig",
-          "kind": "boolean",
-          "required": false,
-          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
-        },
         "links": {
           "label": "Links",
           "kind": "links",
           "required": false
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -84,16 +84,16 @@ export const MODEL = {
             "place"
           ]
         },
-        "stub": {
-          "label": "Unvollständig",
-          "kind": "boolean",
-          "required": false,
-          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
-        },
         "links": {
           "label": "Links",
           "kind": "links",
           "required": false
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -139,7 +139,7 @@ export const MODEL = {
           "multiline": true
         },
         "location": {
-          "label": "Geokoordinaten",
+          "label": "Koordinaten",
           "kind": "location",
           "required": false
         },
@@ -148,16 +148,22 @@ export const MODEL = {
           "kind": "string",
           "required": false
         },
-        "stub": {
-          "label": "Unvollständig",
-          "kind": "boolean",
+        "postal_code": {
+          "label": "PLZ",
+          "kind": "string",
           "required": false,
-          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
+          "description": "Holds for the place and for everything below it (the nearest place above that has one counts): the address of a building is made of its name, this code and the name of the place that has it."
         },
         "links": {
           "label": "Links",
           "kind": "links",
           "required": false
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -202,6 +208,14 @@ export const MODEL = {
           "required": false,
           "description": "The dates it takes place on (past ones too): a list of start (2026-04-04 or 2026-04-04T19:00), end (optional, for several days), note (optional) and cancelled (true: it did not take place; takes that date out of the rule). A one-off event needs at least one; for a recurring one they add to the rule."
         },
+        "places": {
+          "label": "Orte",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "place"
+          ]
+        },
         "organizers": {
           "label": "Veranstalter",
           "kind": "ref",
@@ -211,24 +225,16 @@ export const MODEL = {
             "organization"
           ]
         },
-        "places": {
-          "label": "Orte",
-          "kind": "ref",
-          "required": false,
-          "ref": [
-            "place"
-          ]
-        },
-        "stub": {
-          "label": "Unvollständig",
-          "kind": "boolean",
-          "required": false,
-          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
-        },
         "links": {
           "label": "Links",
           "kind": "links",
           "required": false
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -244,12 +250,6 @@ export const MODEL = {
           "kind": "string",
           "required": true
         },
-        "description": {
-          "label": "Beschreibung",
-          "kind": "string",
-          "required": false,
-          "multiline": true
-        },
         "places": {
           "label": "Orte",
           "kind": "ref",
@@ -257,6 +257,12 @@ export const MODEL = {
           "ref": [
             "place"
           ]
+        },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
         },
         "owners": {
           "label": "Gehört zu",
@@ -267,16 +273,16 @@ export const MODEL = {
             "organization"
           ]
         },
-        "stub": {
-          "label": "Unvollständig",
-          "kind": "boolean",
-          "required": false,
-          "description": "Made by the chat from a name only; to be completed. Take it away when the entry is complete."
-        },
         "links": {
           "label": "Links",
           "kind": "links",
           "required": false
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -332,6 +338,12 @@ export const MODEL = {
           "kind": "text",
           "required": true,
           "description": "One Markdown text per role, at least one. See text_roles."
+        },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
         }
       }
     },
@@ -530,6 +542,12 @@ export const MODEL = {
           "required": false,
           "description": "One entry per place, when storage is external."
         },
+        "tags": {
+          "label": "Tags",
+          "kind": "tags",
+          "required": false,
+          "description": "Free keywords. One that starts with an underscore is internal (_stub: made from a name only, to be completed); it is not shown on the website."
+        },
         "files": {
           "label": "Dateien",
           "kind": "files",
@@ -551,6 +569,9 @@ export const MODEL = {
               "main"
             ],
             "max": 1
+          },
+          "parents": {
+            "min": 1
           }
         },
         "document": {
@@ -566,6 +587,9 @@ export const MODEL = {
               "page"
             ],
             "numbered": true
+          },
+          "parents": {
+            "min": 1
           }
         },
         "audio": {
@@ -575,6 +599,9 @@ export const MODEL = {
             "roles": [
               "main"
             ]
+          },
+          "parents": {
+            "min": 1
           }
         },
         "video": {
@@ -584,6 +611,9 @@ export const MODEL = {
             "roles": [
               "main"
             ]
+          },
+          "parents": {
+            "min": 1
           }
         },
         "group": {

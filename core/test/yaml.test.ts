@@ -84,3 +84,16 @@ describe('replaceIds (quotes)', () => {
     expect(replaceIds(text, 'parent', map)).toBe('places:\n  - "a" # the village\n  - b\nparent: \'c\'\n')
   })
 })
+
+describe('tags', () => {
+  const person = (tags: string) => `id: erika\ntype: person\nname: Erika\ntags:\n${tags}`
+  it('are free text, internal ones start with an underscore', () => {
+    expect(validateEntryYaml(person('  - Chor\n  - Freiwillige Feuerwehr\n  - _stub\n'))).toEqual([])
+  })
+  it('are not empty, not twice, not with a comma or spaces around', () => {
+    expect(validateEntryYaml(person('  - ""\n')).length).toBeGreaterThan(0)
+    expect(validateEntryYaml(person('  - Chor\n  - Chor\n')).length).toBeGreaterThan(0)
+    expect(validateEntryYaml(person('  - "a, b"\n')).length).toBeGreaterThan(0)
+    expect(validateEntryYaml(person('  - " Chor"\n')).length).toBeGreaterThan(0)
+  })
+})

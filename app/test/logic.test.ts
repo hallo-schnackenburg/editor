@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets, movedFile, renumbered } from '../src/logic.js'
+import { autoAddress, describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets, movedFile, renumbered, groupIndex, isGroup } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -53,7 +53,7 @@ describe('groups', () => {
       ['Ort', ['Festplatz am Elbdeich', 'Feuerwehrhaus Schnackenburg']],
       ['Ereignis', ['Osterfeuer in Schnackenburg']],
       ['Inhalt', ['Das Osterfeuer am Elbdeich']],
-      ['Objekt', ['Osterfeuer am Deich']],
+      ['Objekt', ['Osterfeuer', 'Osterfeuer am Deich']],
     ])
     expect(groups(all, 'feuerwehr').map((g) => g.label)).toEqual(['Organisation', 'Ort'])
   })
@@ -290,5 +290,81 @@ describe('the order of files', () => {
   it('closes the gap of a removed page', () => {
     expect(shas(renumbered([page('a', 1), page('c', 3)]))).toEqual(['a', 'c'])
     expect(renumbered([page('a', 1), page('c', 3)]).map((f) => f.num)).toEqual([1, 2])
+  })
+})
+
+describe('the groups of the objects', () => {
+  const object = (id: string, kind: string, title: string, parents?: string[]) =>
+    makeEntry(`objects/${id.slice(-2)}/${id}.yaml`, `id: ${id}\ntype: object\nkind: ${kind}\ntitle: ${title}\n${parents ? `parents: [${parents.join(', ')}]\n` : ''}`, 'sha')
+  const A = '01kb4z8m3q7xv2n5r6t9c0d1aa'
+  const B = '01kb4z8m3q7xv2n5r6t9c0d1bb'
+  const C = '01kb4z8m3q7xv2n5r6t9c0d1cc'
+  const D = '01kb4z8m3q7xv2n5r6t9c0d1dd'
+  const E = '01kb4z8m3q7xv2n5r6t9c0d1ee'
+  const titles = (list: ReturnType<typeof makeEntry>[] | undefined) => (list ?? []).map(titleOf)
+
+  it('is a tree: groups without a group are the roots, groups come before the other members', () => {
+    const all = [object(A, 'group', 'Fotos'), object(B, 'group', 'Alben', [A]), object(C, 'image', 'Brücke', [A]), object(D, 'image', 'Deich', [B])]
+    const tree = groupIndex(all)
+    expect(titles(tree.roots)).toEqual(['Fotos'])
+    expect(titles(tree.members.get(A))).toEqual(['Alben', 'Brücke'])
+    expect(titles(tree.members.get(B))).toEqual(['Deich'])
+    expect(tree.loose).toEqual([])
+  })
+
+  it('has an object in several groups', () => {
+    const tree = groupIndex([object(A, 'group', 'Fotos'), object(B, 'group', 'Favoriten'), object(C, 'image', 'Brücke', [A, B])])
+    expect(titles(tree.members.get(A))).toEqual(['Brücke'])
+    expect(titles(tree.members.get(B))).toEqual(['Brücke'])
+    expect(tree.up.get(C)).toEqual([A, B])
+  })
+
+  it('keeps what is in no group that exists apart, and the other entries out', () => {
+    const tree = groupIndex([object(A, 'group', 'Fotos'), object(C, 'image', 'Ohne'), object(D, 'image', 'Verwaist', [E]), object(B, 'group', 'Verwaist', [E]), object(E, 'image', 'Kein Gruppe', [A]), ...examples().filter((e) => typeOf(e) !== 'object')])
+    expect(titles(tree.roots)).toEqual(['Fotos'])
+    expect(titles(tree.loose).sort()).toEqual(['Ohne', 'Verwaist', 'Verwaist'])
+    expect(isGroup(tree.byId.get(A)!)).toBe(true)
+    expect(isGroup(tree.byId.get(C)!)).toBe(false)
+  })
+
+  it('is not led in circles by groups that are in each other', () => {
+    const tree = groupIndex([object(A, 'group', 'A', [B]), object(B, 'group', 'B', [A]), object(C, 'group', 'C', [C])])
+    expect(tree.roots).toEqual([])
+    expect(titles(tree.members.get(A))).toEqual(['B'])
+    expect(tree.up.get(C)).toEqual([])
+  })
+
+  it('is in a new object when it is made in a group', () => {
+    const photo = newEntry('object', 'Kirchturm', '', (b) => b.fill(0), { kind: 'image', group: A })
+    expect(photo.data?.parents).toEqual([A])
+  })
+})
+
+describe('the address of a building', () => {
+  const place = (id: string, extra: string) => makeEntry(`entities/places/${id}.yaml`, `id: ${id}\ntype: place\n${extra}`, 'sha')
+  const world = [
+    place('schnackenburg', 'name: Schnackenburg\nkind: locality\npostal_code: "29493"\n'),
+    place('gummern', 'name: Gummern\nkind: locality\nparent: schnackenburg\n'),
+    place('aulosen', 'name: Aulosen\nkind: locality\npostal_code: "39615"\n'),
+    place('aulosen/haus', 'name: Aulosen 4\nkind: building\nparent: aulosen\n'),
+  ]
+  const building = (name: string, parent = 'gummern') => place('gummern/x', `name: ${name}\nkind: building\nparent: ${parent}\n`)
+
+  it('is the name, the postal code of the nearest place above that has one, and its name', () => {
+    expect(autoAddress(building('Gummern 3'), world)).toBe('Gummern 3, 29493 Schnackenburg')
+    expect(autoAddress(world[3], world)).toBe('Aulosen 4, 39615 Aulosen')
+  })
+
+  it('is nothing for a name that is not a place and a house number, for another kind, or without a postal code above', () => {
+    expect(autoAddress(building('Gasthaus Gummern'), world)).toBeUndefined()
+    expect(autoAddress(building('Gummern'), world)).toBeUndefined()
+    expect(autoAddress(place('gummern/y', 'name: Gummern 3\nkind: other\nparent: gummern\n'), world)).toBeUndefined()
+    expect(autoAddress(building('Gummern 3'), world.filter((e) => idOf(e) !== 'schnackenburg'))).toBeUndefined()
+    expect(autoAddress(building('Gummern 3', 'nowhere'), world)).toBeUndefined()
+  })
+
+  it('does not run in circles when places lie in each other', () => {
+    const loop = [place('a', 'name: A\nkind: locality\nparent: b\n'), place('b', 'name: B\nkind: locality\nparent: a\n')]
+    expect(autoAddress(place('a/1', 'name: A 1\nkind: building\nparent: a\n'), loop)).toBeUndefined()
   })
 })

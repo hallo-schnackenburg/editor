@@ -8,6 +8,8 @@
 //   POST /repo/submissions/<n>/rename      {name}: the title of the pull request (draft or waiting for review)
 //   GET  /repo/submissions/<n>/comments    the comments on it, oldest first
 //   POST /repo/submissions/<n>/comments    {body}
+//   PATCH  /repo/submissions/<n>/comments/<id>   {body}: change a comment (only the person's own)
+//   DELETE /repo/submissions/<n>/comments/<id>   remove a comment (only the person's own)
 //
 // There are no roles of our own: GitHub decides who may do what (collaborators, branch protection, required checks).
 
@@ -121,13 +123,14 @@ async function checksOf(token: string, repo: string, sha: string, fetchFn: typeo
 }
 
 export async function handleSubmissions(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
-  const match = route.match(/^\/repo\/submissions(?:\/(\d+)(?:\/(submit|merge|close|rename|comments))?)?$/)
+  const match = route.match(/^\/repo\/submissions(?:\/(\d+)(?:\/(submit|merge|close|rename|comments)(?:\/(\d+))?)?)?$/)
   if (!match) return null
   const repo = env.DATA_REPO
   if (!repo) return json({ error: 'The server has no DATA_REPO.' }, 500)
   const token = session.access
   const number = match[1] ? Number(match[1]) : undefined
   const action = match[2]
+  const commentId = match[3] ? Number(match[3]) : undefined
 
   try {
     if (number === undefined) {
@@ -141,6 +144,28 @@ export async function handleSubmissions(request: Request, route: string, session
       const p = await pull(token, repo, number, fetchFn)
       const [{ items, truncated }, checks] = await Promise.all([itemsOf(token, repo, p, fetchFn), checksOf(token, repo, p.head.sha, fetchFn)])
       return json({ submission: submissionOf(p), items, truncated, checks })
+    }
+
+    if (action === 'comments' && commentId !== undefined) {
+      if (request.method !== 'PATCH' && request.method !== 'DELETE') return json({ error: 'Method not allowed.' }, 405)
+      await pull(token, repo, number, fetchFn)
+      // Only the person's own comments are changed or removed here, and only those of this submission.
+      const own = await call<{ user: { login: string } | null; issue_url: string }>(fetchFn, token, 'GET', `/repos/${repo}/issues/comments/${commentId}`).catch((error) => {
+        if (error instanceof GitHubError && error.status === 404) return undefined
+        throw error
+      })
+      if (!own || !own.issue_url.endsWith(`/issues/${number}`)) return json({ error: 'Diesen Kommentar gibt es nicht.' }, 404)
+      if (own.user?.login !== session.login) return json({ error: 'Du kannst nur deine eigenen Kommentare ändern.' }, 403)
+      if (request.method === 'DELETE') {
+        await call(fetchFn, token, 'DELETE', `/repos/${repo}/issues/comments/${commentId}`)
+        return new Response(null, { status: 204 })
+      }
+      const data = await readBody(request)
+      const text = typeof data.body === 'string' ? data.body.trim() : ''
+      if (!text) throw new Refused('Der Kommentar ist leer.')
+      if (text.length > MAX_COMMENT) throw new Refused('Der Kommentar ist zu lang.', 413)
+      const c = await call<{ id: number; body: string; created_at: string; user: { login: string; avatar_url: string } }>(fetchFn, token, 'PATCH', `/repos/${repo}/issues/comments/${commentId}`, { body: text })
+      return json({ id: c.id, author: c.user.login, avatar: c.user.avatar_url, body: c.body, created: c.created_at })
     }
 
     if (action === 'comments') {

@@ -27,7 +27,7 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
   const staged: unknown[] = []
   const comments = new Map<number, any[]>()
   /** How the checks of every head stand, and whether the base branch asks for them before a merge. */
-  const options = { checks: 'success' as 'success' | 'failure' | 'pending' | 'none', protect: false }
+  const options = { checks: 'success' as 'success' | 'failure' | 'pending' | 'none', protect: false, commenter: undefined as string | undefined }
   const tree = (ref: string) => (ref === 'base-snapshot' ? snapshot : ref.startsWith('head-') ? branches.get(ref.slice(5)) : branches.get(ref))
   const pullJson = (p: any) => ({ ...p, head: { ...p.head }, base: { ...p.base } })
 
@@ -182,11 +182,26 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
     if (m) {
       const list = comments.get(Number(m[1])) ?? []
       if (method === 'POST') {
-        const c = { id: list.length + 1, body: body.body, created_at: '2026-01-01T10:00:00Z', user: { login: 'anna', avatar_url: 'https://avatars.example/anna' } }
+        const c = { id: list.length + 1, body: body.body, created_at: '2026-01-01T10:00:00Z', issue_url: `https://api.github.com/repos/o/r/issues/${m[1]}`, user: { login: options.commenter ?? 'anna', avatar_url: 'https://avatars.example/anna' } }
         comments.set(Number(m[1]), [...list, c])
         return json(c, 201)
       }
       return json(list)
+    }
+    m = path.match(/^\/repos\/o\/r\/issues\/comments\/(\d+)$/)
+    if (m) {
+      const id = Number(m[1])
+      for (const [issue, list] of comments) {
+        const c = list.find((x: any) => x.id === id)
+        if (!c) continue
+        if (method === 'PATCH') c.body = body.body
+        if (method === 'DELETE') {
+          comments.set(issue, list.filter((x: any) => x.id !== id))
+          return new Response(null, { status: 204 })
+        }
+        return json(c)
+      }
+      return json({ message: 'Not Found' }, 404)
     }
     return json({ message: `unexpected ${method} ${path}` }, 500)
   }) as typeof fetch

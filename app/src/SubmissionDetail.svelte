@@ -1,19 +1,22 @@
 <script lang="ts">
   import { fieldChanges, lineDiff } from './diff.js'
   import { makeEntry, titleOf } from './logic.js'
+  import { tick } from 'svelte'
   import type { SubmissionItem } from './api.js'
   import type { Workspace } from './workspace.svelte.js'
 
   // What a submission does: every entry it adds, changes and removes, one below the other (before and after), how the check stands, and
   // what was said about it. What can be done with it is with its card in the column on the right.
-  let { ws }: { ws: Workspace } = $props()
+  let { ws, onopen }: { ws: Workspace; onopen: (path: string) => void } = $props()
   const review = $derived(ws.review)
 
   const KIND = { added: 'Neu', modified: 'Geändert', removed: 'Gelöscht' } as const
   const ORDER = { added: 0, modified: 1, removed: 2 } as const
 
-  let yaml = $state(false)
+  let yaml = $state(true)
   let draft = $state('')
+  /** The comment that is being changed, and its text. */
+  let editing = $state<{ id: number; text: string }>()
 
   const when = (iso: string) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
   const nameOf = (i: SubmissionItem) => titleOf(makeEntry(i.path, i.after ?? i.before ?? ''))
@@ -21,11 +24,28 @@
   const waiting = $derived(review.detailState === 'loading' || ws.loading)
   const items = $derived([...(review.detail?.items ?? [])].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]))
 
+  // The change that was clicked in the list on the right is marked and brought into view.
+  $effect(() => {
+    const path = review.focus
+    void review.detail
+    if (!path) return
+    void tick().then(() => [...document.querySelectorAll<HTMLElement>('[data-path]')].find((el) => el.dataset.path === path)?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+  })
+
+  /** Whether an entry can be opened from here: not one that is removed, and not a topic. */
+  const openable = (i: SubmissionItem) => i.kind !== 'removed' && !ws.changes.some((c) => c.entry.path === i.path && c.topic)
+
   // Whatever was typed belongs to the submission that was open.
   $effect(() => {
     void review.selected
     draft = ''
+    editing = undefined
   })
+
+  async function change(event: Event) {
+    event.preventDefault()
+    if (editing && (await review.editComment(editing.id, editing.text))) editing = undefined
+  }
 
   async function send(event: Event) {
     event.preventDefault()
@@ -62,11 +82,12 @@
       {/if}
 
       {#each items as i (i.path)}
-        <section class="item">
+        <section class="item" class:marked={review.focus === i.path} data-path={i.path}>
           <div class="head">
             <span class="kind {i.kind}">{KIND[i.kind]}</span>
             <strong>{nameOf(i)}</strong>
             <span class="muted mono path">{i.path}</span>
+            {#if openable(i)}<button class="open" onclick={() => onopen(i.path)}>Öffnen</button>{/if}
           </div>
           {#each review.problems.get(i.path) ?? [] as issue}<p class="error-box"><span class="mono">{issue.path}</span> {issue.message}</p>{/each}
           {#if yaml}
@@ -100,7 +121,24 @@
       <h2>Kommentare <span class="muted">{review.comments.length}</span></h2>
       <ul class="comments">
         {#each review.comments as comment (comment.id)}
-          <li><div class="muted"><strong>{comment.author}</strong> · {when(comment.created)}</div><div class="body">{comment.body}</div></li>
+          <li>
+            <div class="muted">
+              <strong>{comment.author}</strong> · {when(comment.created)}
+              {#if comment.author === ws.user?.login && editing?.id !== comment.id}
+                <button class="link" onclick={() => (editing = { id: comment.id, text: comment.body })}>Bearbeiten</button>
+                <button class="link" onclick={() => void review.removeComment(comment.id)}>Löschen</button>
+              {/if}
+            </div>
+            {#if editing?.id === comment.id}
+              <form onsubmit={change}>
+                <textarea rows="3" bind:value={editing.text}></textarea>
+                <button type="submit" disabled={!editing.text.trim()}>Speichern</button>
+                <button type="button" onclick={() => (editing = undefined)}>Abbrechen</button>
+              </form>
+            {:else}
+              <div class="body">{comment.body}</div>
+            {/if}
+          </li>
         {/each}
       </ul>
       <form onsubmit={send}>
@@ -125,9 +163,11 @@
   .checks.success { color: var(--ok); }
   .checks.failure { color: var(--bad); }
   .checks.pending, .checks.none { color: var(--muted); }
-  .item { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
+  .item.marked { background: var(--accent-wash); box-shadow: 0 0 0 6px var(--accent-wash); border-radius: 4px; }
+  .item { scroll-margin-top: 16px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
   .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
   .path { font-size: 12px; }
+  .head .open { margin-left: auto; padding: 2px 10px; font-size: 12px; }
   .kind { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   .kind.added { color: var(--ok); }
   .kind.removed { color: var(--bad); }

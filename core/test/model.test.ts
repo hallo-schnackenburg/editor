@@ -23,13 +23,13 @@ describe('contents.yaml', () => {
 
   it('tells the editor how each field is shown', () => {
     const kinds = (type: keyof typeof MODEL.types) => Object.fromEntries(Object.entries(MODEL.types[type].fields).map(([name, f]) => [name, f.kind]))
-    expect(kinds('place')).toEqual({ name: 'string', description: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string', stub: 'boolean', links: 'links' })
+    expect(kinds('place')).toEqual({ name: 'string', description: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string', postal_code: 'string', tags: 'tags', links: 'links' })
     // the description is written over several lines
     expect(MODEL.types.place.fields.description).toMatchObject({ multiline: true })
     for (const type of ['person', 'organization', 'place', 'event'] as const) expect(kinds(type)).toMatchObject({ description: 'string', links: 'links' })
     expect(MODEL.types.place.fields.kind.options).toMatchObject({ locality: 'Ort', building: 'Gebäude' })
     expect(MODEL.types.place.fields.parent).toMatchObject({ kind: 'ref', single: true })
-    expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', objects: 'ref', published: 'date', text: 'text' })
+    expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', objects: 'ref', published: 'date', text: 'text', tags: 'tags' })
     expect(kinds('event')).toMatchObject({ recurring: 'boolean', organizers: 'ref' })
     expect(kinds('person')).toMatchObject({ links: 'links' })
     expect(kinds('object')).toMatchObject({ kind: 'choice', files: 'files', alt: 'string', date: 'string', origin: 'group', original: 'group', about: 'ref', external: 'other' })

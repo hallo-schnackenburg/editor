@@ -12,6 +12,7 @@
   import SubmissionDetail from './SubmissionDetail.svelte'
   import SubmissionsPane from './SubmissionsPane.svelte'
   import Tree from './Tree.svelte'
+  import { formatRoute, parseRoute, sameStep, type Route } from './route.js'
   import type { Workspace } from './workspace.svelte.js'
 
   let { ws }: { ws: Workspace } = $props()
@@ -24,6 +25,8 @@
   let creating = $state<NewContext>()
   /** The entry that is open in the form (else it is shown to read); its path follows when the entry is renamed. */
   let editingPath = $state<string>()
+  /** The entry whose YAML is shown (to read) instead of its fields. */
+  let yamlPath = $state<string>()
   $effect(() => {
     ws.formOpen = !!creating || (!!selected && !!model && editingPath === selected.path && ws.editable)
     return () => (ws.formOpen = false)
@@ -37,6 +40,7 @@
 
   const show = (path: string | undefined) => {
     creating = undefined
+    yamlPath = undefined
     ws.review.detailOpen = false
     ws.select(path)
   }
@@ -74,6 +78,114 @@
       ws.error = (error as Error).message
     }
   }
+
+  // The address: where the person is shows in it (every step is one in the history of the browser), and an address (typed, passed on,
+  // back and forward) brings the person there. What the address says is the same for everybody.
+  const current = $derived<Route>({
+    submission: ws.branch === undefined ? undefined : ws.active?.number,
+    ...(creating
+      ? { view: 'new' as const, context: creating }
+      : reviewing || (ws.branch !== undefined && !ws.selectedPath)
+        ? { view: 'details' as const, focus: ws.review.focus }
+        : ws.selectedPath
+          ? { view: editingPath === ws.selectedPath && ws.editable ? ('edit' as const) : yamlPath === ws.selectedPath ? ('yaml' as const) : ('entry' as const), path: ws.selectedPath }
+          : { view: 'none' as const }),
+  })
+  /** The first place is settled (the address that was opened with); until then the address is left as it is. */
+  let ready = $state(false)
+  /** An address is being applied (it may take a while to switch): what is passing through is not written to the address. */
+  let applying = $state(false)
+  let last: Route | undefined
+
+  /** The middle as a route says it (the submission is the right one already). */
+  function middle(route: Route) {
+    const wrong = (message: string) => {
+      ws.error = message
+      creating = undefined
+      editingPath = undefined
+      ws.review.detailOpen = ws.branch !== undefined
+    }
+    if (route.view === 'new' && route.context) {
+      editingPath = undefined
+      make(route.context)
+    } else if ((route.view === 'entry' || route.view === 'edit' || route.view === 'yaml') && route.path) {
+      if (ws.entries.length > 0 && !ws.entries.some((e) => e.path === route.path)) return wrong('Diesen Eintrag gibt es nicht (mehr).')
+      if (route.view === 'edit' && !ws.editable) route = { ...route, view: 'entry' }
+      creating = undefined
+      editingPath = undefined
+      show(route.path)
+      if (route.view === 'edit') {
+        editingPath = route.path
+        editingKey++
+      } else if (route.view === 'yaml') yamlPath = route.path
+    } else if (route.view === 'details' && ws.branch !== undefined) {
+      creating = undefined
+      editingPath = undefined
+      ws.review.detailOpen = true
+      ws.review.focus = route.focus
+    } else {
+      creating = undefined
+      editingPath = undefined
+      show(undefined)
+    }
+  }
+
+  async function apply(route: Route) {
+    applying = true
+    try {
+      const have = ws.branch === undefined ? undefined : ws.active?.number
+      if (route.submission !== have) {
+        const target = route.submission === undefined ? undefined : ws.submissions.find((c) => c.number === route.submission && (c.state === 'draft' || c.state === 'submitted'))
+        if (route.submission !== undefined && !target) {
+          ws.error = `Die Einreichung #${route.submission} gibt es nicht oder sie ist abgeschlossen.`
+          route = { view: 'none' }
+        }
+        // What is not saved asks first (and the address goes back to where the person is).
+        if (!(await (target ? ws.work(target) : ws.switchTo(undefined)))) return
+      }
+      leave(() => middle(route))
+    } finally {
+      applying = false
+      history.replaceState(null, '', formatRoute(current))
+    }
+  }
+
+  // Back and forward.
+  $effect(() => {
+    const onPop = () => {
+      const route = parseRoute(location.hash)
+      if (route && ws.started) void apply(route)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  })
+
+  // The address the page was opened with: what the start could not do by itself (the form of an entry, the form for a new one) is done here.
+  $effect(() => {
+    if (!ws.started || ready) return
+    untrack(() => {
+      const route = ws.route
+      ws.route = undefined
+      if (route && (route.view === 'edit' || route.view === 'new' || route.path)) middle(route)
+      ready = true
+    })
+  })
+
+  // Every step of the person is one in the history; what the app does by itself (the first address, a draft getting its number, a rename) replaces the entry.
+  $effect(() => {
+    const route = current
+    if (!ready || applying) return
+    const hash = formatRoute(route)
+    if (hash !== location.hash && !(hash === '#/' && (location.hash === '' || location.hash === '#'))) {
+      history[last === undefined || sameStep(last, route) ? 'replaceState' : 'pushState'](null, '', hash)
+    } else if (hash === '#/' && location.hash === '') history.replaceState(null, '', hash)
+    last = route
+    try {
+      sessionStorage.setItem('contents-editor:address', hash)
+    } catch {
+      // not kept
+    }
+  })
 
   // The sizes of the panes, which the borders between them change; kept for this browser (the storage may be missing or full).
   const LAYOUT = 'contents-editor.layout'
@@ -167,7 +279,7 @@
 
   <section class="detail">
     {#if reviewing}
-      <SubmissionDetail {ws} />
+      <SubmissionDetail {ws} onopen={edit} />
     {:else if creating?.type === 'content' && creating.folder === ''}
       <TopicForm {ws} oncancel={() => (creating = undefined)} ondone={() => (creating = undefined)} />
     {:else if creating}
@@ -179,16 +291,22 @@
         <header>
           <div>
             <div class="muted small">{model.label}{#if selected.data?.subtype} · {model.subtypes[selected.data.subtype as keyof typeof model.subtypes] ?? selected.data.subtype}{/if}</div>
-            <h1>{titleOf(selected)}</h1>
+            <h1>{titleOf(selected)}{#if selected.data?.recurring === true}<span class="recurring" title="Wiederkehrend" role="img" aria-label="Wiederkehrend">↻</span>{/if}</h1>
             <div class="muted mono small">{selected.path}</div>
           </div>
-          {#if ws.editable}<button class="primary" onclick={() => edit(selected.path)}>Bearbeiten</button>{/if}
+          <div class="actions">
+            <button class:on={yamlPath === selected.path} onclick={() => (yamlPath = yamlPath === selected.path ? undefined : selected.path)}>YAML</button>
+            {#if ws.editable}<button class="primary" onclick={() => edit(selected.path)}>Bearbeiten</button>{/if}
+          </div>
         </header>
 
+        {#if yamlPath === selected.path}
+          <pre class="yaml mono">{selected.text}</pre>
+        {:else}
         <dl>
           {#each Object.entries(model.fields) as [name, field]}
             {@const value = selected.data?.[name]}
-            {#if value !== undefined && field.kind !== 'text' && name !== 'title' && name !== 'name'}
+            {#if value !== undefined && field.kind !== 'text' && name !== 'title' && name !== 'name' && !(name === 'recurring' && value === true)}
               <dt>{field.label}</dt>
               <dd>
                 {#if field.kind === 'ref' && (Array.isArray(value) || typeof value === 'string')}
@@ -203,7 +321,7 @@
                     {/each}
                   </span>
                 {:else if field.kind === 'links' && Array.isArray(value)}
-                  {#each value as l}<div><a href={l.url} target="_blank" rel="noreferrer">{l.label}</a> <span class="muted small">{l.url}</span></div>{/each}
+                  {#each value as l}<div><a href={l.url} title={l.url} target="_blank" rel="noreferrer">{l.label}</a></div>{/each}
                 {:else if field.kind === 'dates' && Array.isArray(value)}
                   {#each value.filter((d) => d && typeof d === 'object') as d}
                     <div class:cancelled={d.cancelled}>{whenText(d.start)}{#if d.end} – {whenText(d.end)}{/if}{#if d.note} <span class="muted small">{d.note}</span>{/if}{#if d.cancelled} <span class="muted small">ausgefallen</span>{/if}</div>
@@ -215,7 +333,7 @@
                   <div class="muted small">ab {whenText(rule.start)}</div>
                   {#each nextDates(rule) as when}<div>{whenText(when)}</div>{/each}
                 {:else if field.kind === 'location'}
-                  <span class="mono">{(value as { lat: number; lon: number }).lat}, {(value as { lat: number; lon: number }).lon}</span>
+                  <span>{(value as { lat: number; lon: number }).lat}, {(value as { lat: number; lon: number }).lon}</span>
                 {:else if field.kind === 'choice'}
                   {(field as { options?: Record<string, string> }).options?.[String(value)] ?? String(value)}
                 {:else if field.kind === 'boolean'}
@@ -234,6 +352,7 @@
             {/if}
           {/each}
         </dl>
+        {/if}
 
         {#if roles.length > 0}
           <div class="texts">
@@ -249,7 +368,7 @@
 
         {#if incoming.length > 0}
           <div class="incoming">
-            <h2>Verweist hierher</h2>
+            <h2>Verweise hierher</h2>
             {#each incoming as g}
               <h3>{MODEL.types[g.type].label}</h3>
               <div class="refs">
@@ -267,7 +386,7 @@
   <Splitter direction="vertical" value={right} min={SIDE_MIN} max={rightMax} invert label="Breite der Änderungen ändern" onchange={(v) => (right = v)} />
 
   <div class="side">
-    <SubmissionsPane {ws} onopen={() => (creating = undefined)} onopenchange={edit} />
+    <SubmissionsPane {ws} onopen={() => (creating = undefined)} />
     {#if chatOpen}
       <Splitter direction="horizontal" value={chatHeight} min={CHAT_MIN} max={chatMax} invert label="Höhe des Chats ändern" onchange={(v) => (chatHeight = v)} />
     {:else}
@@ -317,14 +436,20 @@
   .tools { padding: 10px; }
   .detail { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
   article { padding: 18px 22px 28px; max-width: 54rem; }
+  .actions { display: flex; gap: 6px; flex: none; }
+  .actions .on { background: var(--accent-wash); border-color: var(--accent); }
+  .yaml { margin: 0; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; background: var(--wash); border-radius: 6px; }
   article > header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
   h1 { margin: 2px 0 4px; font-size: 1.5rem; }
+  .recurring { margin-left: 10px; color: var(--muted); font-size: 1.2rem; font-weight: 400; vertical-align: 0.1em; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 24px 0 6px; }
   h3 { font-size: 13px; margin: 10px 0 4px; }
   .small { font-size: 12px; }
-  dl { display: grid; grid-template-columns: 9rem 1fr; gap: 8px 14px; margin: 0; }
-  dt { color: var(--muted); font-size: 13px; padding-top: 2px; }
-  dd { margin: 0; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 14px; margin: 0; align-items: baseline; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd { margin: 0; font-size: 14px; }
+  dd a { color: var(--accent); text-decoration: none; }
+  dd a:hover { text-decoration: underline; }
   .refs { display: flex; flex-wrap: wrap; gap: 6px; }
   .ref { display: inline-flex; gap: 6px; align-items: center; border-radius: 999px; padding: 2px 10px; font-size: 13px; background: var(--wash); }
   .ref.broken { color: var(--bad); background: var(--bad-wash); padding: 2px 10px; border-radius: 999px; }

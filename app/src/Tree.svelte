@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { holds, idOf, isDirty, newContextFor, newContextBelow, shortName, titleOf, type Entry, type NewContext } from './logic.js'
+  import { groupIndex, holds, idOf, isDirty, isGroup, newContextFor, newContextBelow, shortName, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
 
   let { entries, folders = {}, selected, filter = '', hint, repeating, onselect, oncreate }: { entries: Entry[]; folders?: Record<string, string>; selected?: string; filter?: string; hint?: (entry: Entry) => string; repeating?: (entry: Entry) => boolean; onselect: (path: string) => void; oncreate?: (context: NewContext) => void } = $props()
 
@@ -11,7 +11,6 @@
   const NAMES: Record<string, string> = {
     contents: 'Inhalte',
     entities: 'Entitäten',
-    objects: 'Objekte',
     'entities/events': 'Ereignisse',
     'entities/organizations': 'Organisationen',
     'entities/people': 'Personen',
@@ -22,8 +21,8 @@
   const nameOf = (node: { name: string; path: string }) => NAMES[node.path] ?? folders[node.path] ?? node.name.charAt(0).toLocaleUpperCase('de') + node.name.slice(1)
   /** What a folder is called: the entry beside it names it, else its own name. */
   const labelOf = (node: Node) => (node.entry ? titleOf(node.entry) : nameOf(node))
-  /** Entities first, then contents, then objects. */
-  const TOP = ['entities', 'contents', 'objects']
+  /** Entities first, then contents; the objects follow as the tree of their groups. */
+  const TOP = ['entities', 'contents']
 
   const needle = $derived(filter.trim().toLowerCase())
   const matches = (e: Entry) => !needle || titleOf(e).toLowerCase().includes(needle) || idOf(e).includes(needle)
@@ -32,7 +31,7 @@
   /** The folders the entries lie in, the entries in them. Only what matches the search; each folder counts what is below it. */
   const root = $derived.by((): Node => {
     const top: Node = { name: '', path: '', count: 0, folders: [], entries: [] }
-    for (const e of entries.filter(matches)) {
+    for (const e of entries.filter((e) => typeOf(e) !== 'object' && matches(e))) {
       let node = top
       node.count++
       let path = ''
@@ -85,6 +84,57 @@
   const isOpen = (path: string) => (needle ? true : !!opened[path])
   const toggle = (path: string) => (opened[path] = !opened[path])
 
+  // --- the objects: a tree of groups (an object can be in several) ---
+  const tree = $derived(groupIndex(entries))
+  /** With a search: the objects that match and the groups above them. */
+  const visible = $derived.by((): Set<string> | undefined => {
+    if (!needle) return undefined
+    const found = new Set<string>()
+    const add = (id: string) => {
+      if (found.has(id)) return
+      found.add(id)
+      for (const up of tree.up.get(id) ?? []) add(up)
+    }
+    for (const e of tree.byId.values()) if (matches(e)) add(idOf(e))
+    return found
+  })
+  const shown = (e: Entry) => !visible || visible.has(idOf(e))
+  const childrenOf = (id: string) => (tree.members.get(id) ?? []).filter(shown)
+  /** The objects below a group, each once. */
+  const sizeOf = (id: string): number => {
+    const seen = new Set<string>()
+    const walk = (group: string) => {
+      for (const m of tree.members.get(group) ?? []) if (!seen.has(idOf(m))) (seen.add(idOf(m)), walk(idOf(m)))
+    }
+    walk(id)
+    return [...seen].filter((s) => !visible || visible.has(s)).length
+  }
+  const roots = $derived(tree.roots.filter(shown))
+  const loose = $derived(tree.loose.filter(shown))
+  const total = $derived([...tree.byId.values()].filter(shown).length)
+  let objectsOpen = $state(false)
+  let looseOpen = $state(true)
+  let openGroups = $state<Record<string, boolean>>({})
+  const groupOpen = (id: string) => (needle ? true : !!openGroups[id])
+
+  // An object that is chosen somewhere else shows itself: the groups above it open.
+  $effect(() => {
+    const e = selected ? byPath.get(selected) : undefined
+    if (!e || typeOf(e) !== 'object') return
+    objectsOpen = true
+    const seen = new Set<string>()
+    const up = (id: string) => {
+      for (const p of tree.up.get(id) ?? []) if (!seen.has(p)) (seen.add(p), (openGroups[p] = true), up(p))
+    }
+    up(idOf(e))
+  })
+
+  function pickGroup(e: Entry) {
+    const id = idOf(e)
+    openGroups[id] = selected === e.path ? !openGroups[id] : true
+    onselect(e.path)
+  }
+
   // An entry that is chosen somewhere else (a link, a new entry) is shown: its folders open.
   $effect(() => {
     if (!selected) return
@@ -102,6 +152,23 @@
 
 {#snippet plus(context: NewContext | undefined, what: string)}
   {#if oncreate && context}<button class="plus" title="Neu: {what}" aria-label="Neu anlegen: {what}" onclick={() => oncreate(context)}>+</button>{/if}
+{/snippet}
+
+{#snippet group(e: Entry, depth: number, above: string[])}
+  {@const id = idOf(e)}
+  <div class="row" class:active={selected === e.path}>
+    <button class="entry" style:padding-left="{depth * 14 + 4}px" onclick={() => pickGroup(e)} aria-expanded={groupOpen(id)}>
+      <span class="what"><span class="t">{titleOf(e)}</span></span>
+      {#if isDirty(e)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
+    </button>
+    {@render plus({ type: 'object', folder: '', group: id }, titleOf(e))}
+    <button class="num" tabindex="-1" aria-hidden="true" onclick={() => pickGroup(e)}>{sizeOf(id)}</button>
+  </div>
+  {#if groupOpen(id) && !above.includes(id)}
+    {#each childrenOf(id) as child (idOf(child))}
+      {#if isGroup(child)}{@render group(child, depth + 1, [...above, id])}{:else}{@render entry(child, depth + 1)}{/if}
+    {/each}
+  {/if}
 {/snippet}
 
 {#snippet folder(node: Node, depth: number, parentLabel?: string, holder?: Entry)}
@@ -142,7 +209,31 @@
 <div class="tree">
   {#each itemsOf(root) as item ('node' in item ? item.node.path : item.entry.path)}
     {#if 'node' in item}{@render folder(item.node, 0)}{/if}
-  {:else}<p class="muted pad">Nichts gefunden.</p>{/each}
+  {/each}
+  {#if tree.byId.size > 0 || !needle}
+    {#if total > 0 || !needle}
+      <div class="row">
+        <button class="folder" onclick={() => (objectsOpen = !objectsOpen)} aria-expanded={needle ? true : objectsOpen}>
+          <span class="what"><span class="t">Objekte</span></span>
+        </button>
+        {@render plus({ type: 'object', folder: '' }, 'Objekte')}
+        <button class="num" tabindex="-1" aria-hidden="true" onclick={() => (objectsOpen = !objectsOpen)}>{total}</button>
+      </div>
+      {#if needle || objectsOpen}
+        {#each roots as g (idOf(g))}{@render group(g, 1, [])}{/each}
+        {#if loose.length > 0}
+          <div class="row">
+            <button class="folder" style:padding-left="18px" onclick={() => (looseOpen = !looseOpen)} aria-expanded={looseOpen}>
+              <span class="what"><span class="t">Ohne Gruppe</span></span>
+            </button>
+            <button class="num" tabindex="-1" aria-hidden="true" onclick={() => (looseOpen = !looseOpen)}>{loose.length}</button>
+          </div>
+          {#if looseOpen}{#each loose as e (idOf(e))}{#if isGroup(e)}{@render group(e, 2, [])}{:else}{@render entry(e, 2)}{/if}{/each}{/if}
+        {/if}
+      {/if}
+    {/if}
+  {/if}
+  {#if needle && root.folders.length === 0 && total === 0}<p class="muted pad">Nichts gefunden.</p>{/if}
 </div>
 
 <style>

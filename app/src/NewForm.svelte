@@ -1,7 +1,8 @@
 <script lang="ts">
+  import Combobox from './Combobox.svelte'
   import { untrack } from 'svelte'
   import { MODEL, type EntryType } from '@editor/core'
-  import { idOf, newEntry, setValue, titleOf, typeOf, type NewContext } from './logic.js'
+  import { idOf, isGroup, newEntry, setValue, titleOf, typeOf, type NewContext } from './logic.js'
   import LinksField from './LinksField.svelte'
   import type { Workspace } from './workspace.svelte.js'
 
@@ -19,6 +20,9 @@
   // The type of an object (image, document, ...): it decides the files and fields, so it is chosen first.
   const objectKinds = MODEL.types.object.fields.kind.options as Record<string, string>
   let objectKind = $state(Object.keys(objectKinds)[0])
+  // The group an object is in (a group may be in none: it is a root).
+  let group = $state(start.group ?? '')
+  const groups = $derived(ws.entries.filter(isGroup).sort((a, b) => titleOf(a).localeCompare(titleOf(b), 'de', { numeric: true })))
   let description = $state('')
   let links = $state<{ label: string; url: string }[]>([])
   let problem = $state<string>()
@@ -48,8 +52,9 @@
   function submit(event: Event) {
     event.preventDefault()
     problem = undefined
+    if (isObject && !group && objectKind !== 'group') return void (problem = 'Bitte eine Gruppe wählen.')
     try {
-      ws.create(type, label, isObject ? '' : folder, { parent: isPlace ? parent || undefined : undefined, kind: isObject ? objectKind : isPlace ? kind || undefined : undefined, numbered: true })
+      ws.create(type, label, isObject ? '' : folder, { parent: isPlace ? parent || undefined : undefined, kind: isObject ? objectKind : isPlace ? kind || undefined : undefined, group: isObject ? group || undefined : undefined, numbered: true })
       if (hasDescription && description.trim()) ws.edit(setValue(ws.selected!, 'description', 'string', description.trim()))
       if (hasLinks && links.some((l) => l.label.trim() && l.url.trim())) ws.edit(setValue(ws.selected!, 'links', 'links', links))
       ondone(ws.selectedPath!)
@@ -86,13 +91,17 @@
     </label>
   {/if}
 
+  {#if isObject}
+    <label>
+      Gruppe
+      <Combobox label="Gruppe" empty="–" value={group} options={groups.map((g) => ({ value: idOf(g), label: titleOf(g) }))} onpick={(v) => (group = v)} />
+    </label>
+  {/if}
+
   {#if isPlace}
     <label>
       Teil von
-      <select bind:value={parent}>
-        <option value="">–</option>
-        {#each places as p (p.path)}<option value={idOf(p)}>{titleOf(p)}{kindOf(idOf(p)) ? ` (${kindOf(idOf(p))})` : ''}</option>{/each}
-      </select>
+      <Combobox label="Teil von" empty="–" value={parent} options={places.map((p) => ({ value: idOf(p), label: `${titleOf(p)}${kindOf(idOf(p)) ? ` (${kindOf(idOf(p))})` : ''}` }))} onpick={(v) => (parent = v)} />
     </label>
     <label>
       Typ

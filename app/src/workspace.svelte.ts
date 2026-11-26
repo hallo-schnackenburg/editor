@@ -17,6 +17,8 @@ import { prepareFile, type FileEntry } from './prepare.js'
 import { MemoryTextStore, type TextStore } from './texts.js'
 import { Known, MemoryStore, type Listed, type Store, type View } from './known.js'
 import { Review, type Host } from './review.svelte.js'
+import type { Route } from './route.js'
+import { inboxOf, unreadOf, type ActivityEvent, type Doing, type Present, type TeamMessage } from './team.js'
 
 /** A save that is on its way: what is written, where, and how things were before (to take it back if it fails). */
 interface Job {
@@ -129,6 +131,17 @@ export class Workspace implements Host {
   refused = $state<Issue[]>([])
   /** Whether the live connection is open (if not, the server is asked now and then). */
   liveOpen = $state(false)
+  /** Who has the editor open, and what they work on (told by the hub). */
+  present = $state<Present[]>([])
+  /** The activity stream, the newest first, and the id up to which the person has read it. */
+  activity = $state<ActivityEvent[]>([])
+  activitySeen = $state(0)
+  /** What the team did that the person has not read yet (not counting their own). */
+  unread = $derived(unreadOf(this.activity, this.activitySeen, this.user?.login ?? ''))
+  /** What concerns the person: their own submissions. The whole stream is every line. */
+  inbox = $derived(
+    inboxOf(this.activity, (branch, number) => this.submissions.some((s) => s.author === this.user?.login && ((branch !== null && s.branch === branch) || (number !== null && s.number === number))), this.user?.login ?? ''),
+  )
   /** Where the person wants an entry to go (its folder, by path), until they are done with it. */
   moveTo = $state<Record<string, string>>({})
   /** The name the draft is to get when it is made (the person changed it before the first save). */
@@ -178,6 +191,10 @@ export class Workspace implements Host {
   #saveTimer: ReturnType<typeof setTimeout> | undefined
   /** The place the person is at is only kept once the start has restored the old one. */
   #viewReady = false
+  /** The address the page was opened with, if it had one: it decides where the person starts (before what was last seen). Set before `start`. */
+  route: Route | undefined
+  /** The start is over: the place the person is at is known (and the address may show it). */
+  started = $state(false)
   #warming = false
   #warmAgain = false
   #listener: Listener | undefined
@@ -303,7 +320,8 @@ export class Workspace implements Host {
       (error: Error) => ({ error }),
     )
     let shown: string | undefined | null = null
-    let view: View | undefined
+    let view: View | undefined = this.route ? this.#routeView(this.route) : undefined
+    if (this.route) this.#picked = true // an address is a choice: the draft they worked on is not taken instead
     let provisional = false
     try {
       const snapshot = await this.#store.load()
@@ -312,7 +330,7 @@ export class Workspace implements Host {
         this.user = snapshot.user
         this.#known.restore(snapshot)
         this.submissions = snapshot.submissions
-        view = lastView(snapshot.login) ?? snapshot.view
+        view = this.route ? this.#routeView(this.route) : (lastView(snapshot.login) ?? snapshot.view)
         const back = view?.branch ? this.submissions.find((c) => c.branch === view!.branch && isOpen(c)) : undefined
         if (view) {
           // Back to where the person was: the submission they worked on, or the database.
@@ -342,6 +360,11 @@ export class Workspace implements Host {
       view = undefined
     } else this.user = user
     await this.loadSubmissions()
+    // The submission the address names was not known yet (somebody else started it): it is there now.
+    if (this.route?.submission !== undefined && this.branch === undefined) {
+      const named = this.submissions.find((c) => c.number === this.route!.submission && isOpen(c))
+      if (named) this.branch = named.branch
+    }
     // The submission they were at is not there any more: the database.
     if (this.branch !== undefined && !this.active) this.branch = undefined
     // Without a place to go back to, the person comes back to the draft they worked on.
@@ -349,9 +372,17 @@ export class Workspace implements Host {
     this.#showDetails(view?.detailOpen ?? true)
     await this.load({ quiet: shown !== null && shown === this.branch })
     if (view?.path && this.entries.some((e) => e.path === view!.path)) this.select(view.path)
+    if (this.route?.focus && this.branch !== undefined) this.review.focus = this.route.focus
     this.#viewReady = true
+    this.started = true
     this.startLive()
     void this.#warm()
+  }
+
+  /** What an address says, as the place the person was at. */
+  #routeView(route: Route): View {
+    const named = route.submission === undefined ? undefined : this.submissions.find((c) => c.number === route.submission && isOpen(c))
+    return { branch: named?.branch ?? null, detailOpen: route.submission !== undefined && route.view === 'details', path: route.view === 'entry' || route.view === 'edit' || route.view === 'yaml' ? route.path : undefined }
   }
 
   /** The submission that is worked on shows its details (as when it was chosen), also when the page was loaded again. */
@@ -781,10 +812,10 @@ export class Workspace implements Host {
   }
 
   /** Makes a new entry and opens it. With `numbered`, an id that is in use gets a number; otherwise that is an error. */
-  create(type: EntryType, label: string, folder?: string, options: { parent?: string; kind?: string; numbered?: boolean; placeholder?: boolean } = {}): void {
+  create(type: EntryType, label: string, folder?: string, options: { parent?: string; kind?: string; group?: string; numbered?: boolean; placeholder?: boolean } = {}): void {
     if (!this.editable) throw new Error(this.readonlyReason)
     const used = (id: string) => this.entries.some((e) => idOf(e) === id)
-    let entry = newEntry(type, label, folder, undefined, { parent: options.parent, kind: options.kind, taken: options.numbered ? used : undefined })
+    let entry = newEntry(type, label, folder, undefined, { parent: options.parent, kind: options.kind, group: options.group, taken: options.numbered ? used : undefined })
     if (used(idOf(entry)) || this.entries.some((e) => e.path === entry.path)) throw new Error(`Es gibt schon einen Eintrag mit der ID „${idOf(entry)}“.`)
     // With a placeholder, the label only gives the file a name for now; the name field starts empty and the file follows what is typed.
     if (options.placeholder) {
@@ -1258,7 +1289,10 @@ export class Workspace implements Host {
     this.#listener = this.#api.listen(
       (news) => void this.news(news),
       (open) => (this.liveOpen = open),
+      (message) => this.#team(message),
     )
+    this.#listener.say(this.#doing())
+    void this.loadActivity()
     this.#poll = setInterval(() => {
       if (!this.liveOpen && (typeof document === 'undefined' || document.visibilityState === 'visible')) void this.news()
     }, POLL_MS)
@@ -1277,6 +1311,44 @@ export class Workspace implements Host {
         window.removeEventListener('online', online)
       }
     }
+  }
+
+  /** What the person works on, as the others see it. */
+  #doing(): Doing {
+    return { branch: this.branch, path: this.selectedPath }
+  }
+
+  /** Tells the hub what the person works on (the hub tells the others only when it changes, or now and then). */
+  reportPresence(): void {
+    this.#listener?.say(this.#doing())
+  }
+
+  #team(message: TeamMessage): void {
+    if (message.type === 'presence') this.present = message.users
+    else if (!this.activity.some((e) => e.id === message.event.id)) {
+      // A line that grew is the same line with a new id: the old one goes.
+      const e = message.event
+      const rest = this.activity.filter((o) => !(o.kind === e.kind && o.actor === e.actor && o.branch === e.branch && o.at === e.at))
+      this.activity = [e, ...rest]
+    }
+  }
+
+  async loadActivity(): Promise<void> {
+    try {
+      const { events, seen } = await this.#api.activity()
+      this.activity = events
+      this.activitySeen = seen
+    } catch {
+      // the stream is not needed to work
+    }
+  }
+
+  /** The person has read everything there is. */
+  async markActivitySeen(): Promise<void> {
+    const newest = this.activity[0]?.id
+    if (!newest || newest <= this.activitySeen) return
+    this.activitySeen = newest
+    await this.#api.seen(newest).catch(() => undefined)
   }
 
   stopLive(): void {
@@ -1301,6 +1373,7 @@ export class Workspace implements Host {
     this.#known.clear()
     this.#baseKnown = false
     this.#viewReady = false
+    this.started = false
     try {
       localStorage.removeItem(VIEW_KEY)
     } catch {

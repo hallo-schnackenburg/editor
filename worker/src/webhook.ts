@@ -9,6 +9,7 @@
 //
 //   POST /hook/github   (open to everyone, but only a correctly signed call does anything)
 
+import { activityOf, type HookPayload } from './activity.js'
 import { hubOf, type HubNamespace } from './hub.js'
 
 export interface HookEnv {
@@ -55,17 +56,7 @@ export function createHook({ branchPrefix }: HookOptions) {
     const event = request.headers.get('x-github-event')
     if (event === 'ping') return reply(200, 'pong')
 
-    let payload: {
-      ref?: unknown
-      after?: unknown
-      number?: unknown
-      repository?: { full_name?: unknown }
-      pull_request?: { head?: { ref?: unknown; sha?: unknown }; number?: unknown }
-      issue?: { number?: unknown; pull_request?: unknown }
-      check_suite?: { head_branch?: unknown }
-      check_run?: { check_suite?: { head_branch?: unknown } }
-      branches?: { name?: unknown }[]
-    }
+    let payload: HookPayload
     try {
       payload = JSON.parse(body)
     } catch {
@@ -93,9 +84,13 @@ export function createHook({ branchPrefix }: HookOptions) {
       const named = Array.isArray(payload.branches) ? payload.branches.find((b) => ours(b?.name))?.name : undefined
       if (named) news = { type: 'pull', branch: named }
     }
-    if (!news) return reply(202, 'Ignored.')
+    // What the team did goes into the activity stream (the hub writes it down and tells the browsers).
+    const activity = activityOf(event ?? '', payload, { branchPrefix, base: env.BASE_BRANCH ?? 'main' })
+    if (!news && !activity) return reply(202, 'Ignored.')
 
-    await hubOf(env.HUB).fetch(new Request('http://hub/notify', { method: 'POST', body: JSON.stringify(news) }))
+    const hub = hubOf(env.HUB)
+    if (news) await hub.fetch(new Request('http://hub/notify', { method: 'POST', body: JSON.stringify(news) }))
+    if (activity) await hub.fetch(new Request('http://hub/activity', { method: 'POST', body: JSON.stringify(activity) }))
     return reply(204, '')
   }
 }
