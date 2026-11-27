@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import { decodePlusCode, findPlusCode } from '@editor/core'
 
   let { value, onchange }: { value?: { lat: number; lon: number }; onchange: (value: { lat: number | null; lon: number | null }) => void } = $props()
 
@@ -12,6 +13,18 @@
   const parse = (input: HTMLInputElement): number | null => (input.value.trim() === '' || Number.isNaN(input.valueAsNumber) ? null : input.valueAsNumber)
   const typedLat = (event: Event) => onchange({ lat: parse(event.currentTarget as HTMLInputElement), lon })
   const typedLon = (event: Event) => onchange({ lat, lon: parse(event.currentTarget as HTMLInputElement) })
+
+  // A plus code (Google Maps) pasted into either field fills in both; a short one is completed near the place, or near Schnackenburg.
+  const SCHNACKENBURG = { lat: 53.037, lon: 11.568 }
+  function pasted(event: ClipboardEvent) {
+    const code = findPlusCode(event.clipboardData?.getData('text') ?? '')
+    const position = code && decodePlusCode(code, lat !== null && lon !== null ? { lat, lon } : SCHNACKENBURG)
+    if (!position) return
+    event.preventDefault()
+    lat = Number(position.lat.toFixed(6))
+    lon = Number(position.lon.toFixed(6))
+    onchange({ lat, lon })
+  }
 
   // Changed from outside (the assistant filled it in): what the entry has is shown. Only a change of the entry counts, not what is typed here;
   // an entry without a location (only one of the two typed, or none) leaves the fields as they are.
@@ -27,8 +40,8 @@
 </script>
 
 <div class="pair">
-  <label>Breite <input type="number" step="any" min="-90" max="90" bind:value={lat} oninput={typedLat} /></label>
-  <label>Länge <input type="number" step="any" min="-180" max="180" bind:value={lon} oninput={typedLon} /></label>
+  <label>Breite <input type="number" step="any" min="-90" max="90" bind:value={lat} oninput={typedLat} onpaste={pasted} /></label>
+  <label>Länge <input type="number" step="any" min="-180" max="180" bind:value={lon} oninput={typedLon} onpaste={pasted} /></label>
 </div>
 
 <style>

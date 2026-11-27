@@ -2,7 +2,7 @@
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
 import type { FileEntry } from './prepare.js'
-import { MODEL, parseAddress, streetKey, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@editor/core'
+import { MODEL, canLieIn, parseAddress, streetKey, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -338,6 +338,65 @@ export function newContextBelow(e: Entry): NewContext | undefined {
   return holds(e) ? { type: 'place', folder: idOf(e), parent: idOf(e), kind: kindIn(e, idOf(e)) } : undefined
 }
 
+/** What a place is dropped on in the tree: a place that holds others (`parent`), or the folder "sonstige" of one (`other`), or "Orte" itself (neither). */
+export interface DropTarget {
+  parent?: Entry
+  other?: boolean
+}
+
+/**
+ * What a place is as a target when something is dropped beside it, as its sibling: the place it lies in, or "Orte" if it lies in none;
+ * beside a place in a folder "sonstige" it is that folder.
+ */
+export function siblingTarget(entry: Entry | undefined, entries: readonly Entry[]): DropTarget | undefined {
+  if (!entry || typeOf(entry) !== 'place') return undefined
+  const other = entry.data?.kind === 'other' && folderOf(entry).split('/').pop() === 'sonstige' ? { other: true } : {}
+  const parentId = entry.data?.parent
+  if (typeof parentId !== 'string' || !parentId) return other
+  const parent = entries.find((e) => idOf(e) === parentId)
+  return holds(parent) ? { parent, ...other } : undefined
+}
+
+/**
+ * Where a place goes when it is dropped on a target: the id of its new parent and the folder it moves to (the folder follows the parent,
+ * another place in the folder "sonstige" of it). Nothing if it cannot go there: not into itself or below, not in a place of a kind the
+ * model does not allow, not where it already is. Directly under "Orte" (no target) any place may go: it has no parent then.
+ */
+export interface PlaceMove {
+  parent?: string
+  folder: string
+  /** Only if the kind changes: a place dropped on a folder "sonstige" is another place from then on. */
+  kind?: string
+}
+
+export function placeMove(dragged: Entry, target: DropTarget, entries: readonly Entry[]): PlaceMove | undefined {
+  const d = dragged.data
+  if (typeOf(dragged) !== 'place' || !d) return undefined
+  const old = typeof d.kind === 'string' ? d.kind : undefined
+  const parentId = typeof d.parent === 'string' && d.parent ? d.parent : undefined
+  const holder = target.parent
+  // a place dropped on a folder "sonstige" is another place: a locality is not
+  if (target.other && old === 'locality') return undefined
+  const kind = target.other ? 'other' : old
+  const change = kind !== old ? { kind: kind as string } : {}
+  const here = (folder: string, parent?: string) => parentId === parent && folderOf(dragged) === folder && !('kind' in change)
+  if (!holder) {
+    const folder = target.other ? 'sonstige' : '' // directly under "Orte", or in its folder "sonstige": no parent
+    return here(folder) ? undefined : { folder, ...change }
+  }
+  if (!holds(holder)) return undefined
+  // not into itself or into what lies below it
+  const byId = new Map(entries.map((e) => [idOf(e), e]))
+  const seen = new Set<string>()
+  for (let at: Entry | undefined = holder; at && !seen.has(idOf(at)); at = typeof at.data?.parent === 'string' ? byId.get(at.data.parent) : undefined) {
+    if (idOf(at) === idOf(dragged)) return undefined
+    seen.add(idOf(at))
+  }
+  if (kind !== undefined && !canLieIn(kind, String(holder.data?.kind))) return undefined
+  const folder = kind === 'other' ? `${idOf(holder)}/sonstige` : idOf(holder)
+  return here(folder, idOf(holder)) ? undefined : { parent: idOf(holder), folder, ...change }
+}
+
 /** How far apart two words are: the number of letters to change, add or take away. */
 function distance(a: string, b: string): number {
   const row = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -469,6 +528,35 @@ export function autoAddress(entry: Entry, entries: readonly Entry[]): string | u
     if (typeof code === 'string' && code && typeof at.data?.name === 'string') return `${label}, ${code} ${at.data.name}`
   }
   return undefined
+}
+
+/**
+ * A street or place is renamed: the addresses of what lies in it that start with its old name get the new one ("Elbstrasse 9, 29493
+ * Schnackenburg" becomes "Elbstraße 9, ..."). Returns the entries that change, each as it is and as it becomes.
+ */
+export function planAddresses(entry: Entry, oldName: string, entries: readonly Entry[]): { before: Entry; after: Entry }[] {
+  const name = entry.data?.name
+  if (typeOf(entry) !== 'place' || typeof name !== 'string' || !name.trim() || name === oldName) return []
+  const id = idOf(entry)
+  const byId = new Map(entries.map((e) => [idOf(e), e]))
+  const lies = (e: Entry): boolean => {
+    const seen = new Set<string>()
+    for (let at = typeof e.data?.parent === 'string' ? byId.get(e.data.parent) : undefined; at && !seen.has(idOf(at)); at = typeof at.data?.parent === 'string' ? byId.get(at.data.parent) : undefined) {
+      if (idOf(at) === id) return true
+      seen.add(idOf(at))
+    }
+    return false
+  }
+  const changes: { before: Entry; after: Entry }[] = []
+  for (const other of entries) {
+    const address = other.data?.address
+    if (other === entry || typeOf(other) !== 'place' || typeof address !== 'string' || !lies(other)) continue
+    const parsed = parseAddress(address)
+    if (!parsed || streetKey(parsed.street) !== streetKey(oldName) || parsed.street === name.trim()) continue
+    const result = setField(other.text, 'address', address.replace(parsed.street, name.trim()), address)
+    if (result.ok && result.text !== other.text) changes.push({ before: other, after: withText(other, result.text) })
+  }
+  return changes
 }
 
 /** What renaming an entry does: the entries that move (with a new id and path), and the ones that stay and only get new references. */

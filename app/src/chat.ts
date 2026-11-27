@@ -23,6 +23,10 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'status' | 'confirm'
   text: string
   pending?: Pending
+  /** A change that is made already: one click takes it back. */
+  undo?: { run(): Promise<string>; state: 'open' | 'running' | 'done' }
+  /** A question with the ways to go on: a click on one sends it as the answer. */
+  choices?: { options: string[]; chosen?: string }
 }
 
 interface FieldDef {
@@ -38,6 +42,8 @@ interface FieldDef {
  */
 export interface Outcome {
   messages: ChatMessage[]
+  /** What was done, in words, for the log (the chat only says "Erledigt."). */
+  log: string[]
   results: string[]
   show?: string
   more: boolean
@@ -45,6 +51,8 @@ export interface Outcome {
 
 /** The calls that only look or move; if an answer holds nothing else, the assistant sees what came out and goes on. */
 const LOOKING = new Set(['search', 'read_entry', 'list_changes', 'read_submission', 'open_entry', 'open_submission', 'show_own_work'])
+/** The calls the person is asked about with a button (what others see); the question says it all, so words of the assistant beside them are not shown. */
+const ASKING = new Set(['submit_draft', 'accept_submission', 'close_submission', 'comment_submission'])
 const MAX_TEXT = 6000
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x)
@@ -126,6 +134,11 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
   const note = (text: string): void => {
     messages.push({ role: 'status', text })
   }
+  const log: string[] = []
+  /** Something was done: it goes to the log, and the chat says "Erledigt." once for the answer. */
+  const logged = (text: string): void => {
+    log.push(text)
+  }
   const ids = () => new Set(ws.entries.map(idOf))
   /** The entry a call means: the one it names, or the open one. */
   const which = (ref: string | undefined, pool: Entry[] = ws.entries): { entry: Entry } | { problem: string } => {
@@ -138,6 +151,23 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     return 'Die Person wird gefragt und bestätigt mit einem Knopf. Sag nicht, dass es schon getan ist.'
   }
 
+  /** A change that is made: told as a line of the chat, with "Rückgängig", which brings the entries back as `before` had them. Only as long as nothing else was changed since. */
+  const done = (text: string, before: ReturnType<Workspace['snapshot']>): void => {
+    const after = ws.snapshot()
+    log.push(text)
+    messages.push({
+      role: 'status',
+      text: 'Erledigt.',
+      undo: {
+        state: 'open',
+        run: async () => {
+          if (!ws.unchangedSince(after)) return 'Seitdem wurde weiter geändert; ich nehme nichts zurück.'
+          return (await ws.restore(before)) ? 'Zurückgenommen.' : ws.error || 'Das hat nicht geklappt.'
+        },
+      },
+    })
+  }
+
   /** One field of the entry at `path`. `old` is what the assistant saw. */
   function patch(path: string, field: string, value: unknown, old: unknown, making = false): void {
     const entry = ws.entries.find((e) => e.path === path)
@@ -147,7 +177,8 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     const fields = MODEL.types[type].fields as unknown as Record<string, FieldDef>
     // The name decides the id and the file: renaming moves them and rewrites the references, which is asked about.
     if (field === nameFieldOf(type) || field === 'id' || field === 'type') {
-      if (!making) note(`„${field === 'id' ? 'ID' : field === 'type' ? 'Typ' : fields[field]?.label}“ ändert man mit „Umbenennen“: Das verschiebt die Datei und schreibt die Verweise um.`)
+      // Beside a renaming of the same answer the hint is noise.
+      if (!making && !calls.some((c) => c.tool === 'rename_entry')) note(`„${field === 'id' ? 'ID' : field === 'type' ? 'Typ' : fields[field]?.label}“ ändert man mit „Umbenennen“: Das verschiebt die Datei und schreibt die Verweise um.`)
       return
     }
     const def = fields[field]
@@ -160,7 +191,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       if (result.text === entry.text) return
       ws.setTextOf(path, result.text)
       show = path
-      note(fit.value === undefined ? `${def.label} entfernt.` : `${def.label} geändert.`)
+      logged(fit.value === undefined ? `${def.label} entfernt.` : `${def.label} geändert.`)
     } catch (error) {
       note((error as Error).message)
     }
@@ -190,17 +221,91 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       ws.setTextOf(path, setValue(entry, 'files', 'files', list))
       ws.unstage(taken)
       show = path
-      note(`${taken.length === 1 ? 'Eine Datei' : `${taken.length} Dateien`} zu „${titleOf(entry)}“ hinzugefügt.`)
+      logged(`${taken.length === 1 ? 'Eine Datei' : `${taken.length} Dateien`} zu „${titleOf(entry)}“ hinzugefügt.`)
     }
     for (const problem of problems) note(problem)
     return [taken.length > 0 ? `${taken.length} Datei(en) hinzugefügt.` : '', ...problems].filter(Boolean).join(' ')
   }
 
   /** What the call answers (shown to the person as notes, told to the assistant as text). */
+  /** What a rename or move would do, to ask the person about: the question, the button, one line for it, and what the button does. Or why it is not possible. */
+  async function prepareMove(call: Extract<ToolCall, { tool: 'rename_entry' | 'move_entry' }>): Promise<string | { line: string; run: () => Promise<string | undefined> }> {
+      const found = which(call.entry)
+      if ('problem' in found) return note(found.problem), found.problem
+      const { entry } = found
+      const type = typeOf(entry)
+      if (!type || !entry.data) return note('Der Eintrag ist noch kein gültiges YAML.'), 'Kein gültiges YAML.'
+      const renaming = call.tool === 'rename_entry'
+      if (renaming && call.name.includes('/')) return note('Das ist eine ID oder ein Pfad, kein Name; ich benenne nicht um.'), 'Der Name muss so geschrieben sein, wie ihn Leute lesen ("Elbstraße"), keine ID und kein Pfad.'
+      if (!renaming && MODEL.types[type].class !== 'entity') return note('Verschieben kann man nur Dinge mit Ordnern (Orte, Personen ...).'), 'Nur Entitäten haben Ordner.'
+
+      /** The entry with its new name, and what the change would move. */
+      const plan = () => {
+        const current = ws.entries.find((e) => e.path === entry.path)!
+        let renamed = current
+        if (renaming) {
+          const result = setField(current.text, nameFieldOf(type), call.name, readValue(current.text, nameFieldOf(type)))
+          if (!result.ok) throw new Error('Der Name lässt sich nicht setzen.')
+          renamed = withText(current, result.text)
+        }
+        const all = ws.entries.map((e) => (e.path === renamed.path ? renamed : e))
+        return { renamed, plan: planRename(renamed, all, (p) => all.some((e) => e.path === p), renaming ? undefined : call.folder) }
+      }
+      await ws.ensureAround(entry.path)
+      let preview: ReturnType<typeof plan>
+      try {
+        preview = plan()
+      } catch (error) {
+        return note((error as Error).message), (error as Error).message
+      }
+      if (!preview.plan && !renaming) return note('Der Eintrag liegt schon dort.'), 'Liegt schon dort.'
+      const run = async (): Promise<string | undefined> => {
+        const again = plan()
+        await ws.select(entry.path)
+        if (renaming) ws.edit(again.renamed.text)
+        else ws.setFolder(call.folder)
+        // Saved together by the caller: one commit, not one per entry.
+        return (await ws.finish(() => true, { sync: false })) ? undefined : ws.error || 'Das hat nicht geklappt.'
+      }
+      return { line: renaming ? `${titleOf(entry)} → ${call.name}` : `${titleOf(entry)} → ${call.folder}`, run }
+  }
+
+  /** Renames or moves, made at once and saved in one commit; the chat tells them in one line each, with "Rückgängig". */
+  async function performMoves(items: Exclude<Awaited<ReturnType<typeof prepareMove>>, string>[], verb: string, problems: string[] = []): Promise<string> {
+    const before = ws.snapshot()
+    const lines: string[] = []
+    let failure: string | undefined
+    for (const item of items) {
+      failure = await item.run()
+      if (failure) break
+      lines.push(item.line)
+    }
+    if (lines.length > 0 && !failure && !(await ws.sync())) failure = ws.error || 'Das hat nicht geklappt.'
+    if (lines.length > 0) done(lines.length === 1 ? `${verb}: ${lines[0]}` : `${verb}:\n${lines.join('\n')}`, before)
+    if (failure) note(failure)
+    const rest = [...(failure ? [failure] : []), ...problems]
+    return lines.length > 0 ? `Erledigt (${verb}): ${lines.join('; ')}.${rest.length > 0 ? ` Nicht gemacht: ${rest.join(' ')}` : ''}` : rest.join(' ')
+  }
+
+  /** All renames of one answer together. */
+  async function renameAll(renames: Extract<ToolCall, { tool: 'rename_entry' }>[]): Promise<string> {
+    const prepared: Exclude<Awaited<ReturnType<typeof prepareMove>>, string>[] = []
+    const problems: string[] = []
+    for (const call of renames) {
+      const one = await prepareMove(call)
+      if (typeof one === 'string') problems.push(one)
+      else prepared.push(one)
+    }
+    return prepared.length === 0 ? problems.join(' ') : performMoves(prepared, 'Umbenannt', problems)
+  }
+
   async function one(call: ToolCall): Promise<string | undefined> {
     switch (call.tool) {
+      case 'clarify':
+        messages.push({ role: 'assistant', text: call.question, choices: { options: call.options } })
+        return undefined
       case 'say':
-        messages.push({ role: 'assistant', text: call.text })
+        if (!calls.some((c) => ASKING.has(c.tool))) messages.push({ role: 'assistant', text: call.text })
         return undefined
 
       // --- looking ---
@@ -327,7 +432,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
             if (text !== entry.text) {
               ws.setTextOf(entry.path, text)
               show = entry.path
-              note(`Text „${MODEL.textRoles[call.role as keyof typeof MODEL.textRoles].label}“ geändert.`)
+              logged(`Text „${MODEL.textRoles[call.role as keyof typeof MODEL.textRoles].label}“ geändert.`)
             }
           } catch (error) {
             note((error as Error).message)
@@ -349,7 +454,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         }
         target = path
         show = path
-        note(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
+        logged(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
         for (const [field, value] of Object.entries(call.fields ?? {})) patch(path, field, value, undefined, true)
         if (call.type === 'object' && call.files?.length) attach(path, call.files)
         // A house that lies in no place yet goes where its name or address says (the parent and the kind; the folder follows).
@@ -378,7 +483,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       }
       case 'rename_draft':
         await ws.rename(call.name)
-        note(`Einreichung umbenannt in „${call.name}“.`)
+        logged(`Einreichung umbenannt in „${call.name}“.`)
         return undefined
 
       case 'save': {
@@ -387,7 +492,9 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           note('Es gibt nichts zu speichern.')
           return 'Nichts ungespeichert.'
         }
-        return ask(`${n === 1 ? 'Eine ungespeicherte Änderung' : `${n} ungespeicherte Änderungen`} in die Einreichung speichern?`, 'Fertig', async () => ((await ws.finish(() => true)) ? 'Gespeichert.' : ws.error || 'Das hat nicht geklappt.'))
+        if (!(await ws.finish(() => true))) return note(ws.error || 'Das hat nicht geklappt.'), ws.error || 'Das hat nicht geklappt.'
+        logged(n === 1 ? 'Eine Änderung gespeichert.' : `${n} Änderungen gespeichert.`)
+        return 'Gespeichert.'
       }
       case 'discard_unsaved': {
         const found = which(undefined)
@@ -397,11 +504,10 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           note(`An „${titleOf(entry)}“ ist nichts ungespeichert.`)
           return 'Nichts ungespeichert.'
         }
-        return ask(`Ungespeichertes an „${titleOf(entry)}“ verwerfen?`, 'Verwerfen', async () => {
-          await ws.select(entry.path)
-          ws.revert()
-          return 'Verworfen.'
-        })
+        await ws.select(entry.path)
+        ws.revert()
+        logged(`Ungespeichertes an „${titleOf(entry)}“ verworfen.`)
+        return 'Verworfen.'
       }
       case 'take_back': {
         const pool = ws.changes.flatMap((c) => [c.entry, ...(c.from ? [{ ...c.entry, path: c.from }] : [])])
@@ -409,65 +515,26 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         if ('problem' in found) return note(found.problem), found.problem
         const change = ws.changes.find((c) => c.entry.path === found.entry.path || c.from === found.entry.path)
         if (!change) return note('Dazu gibt es keine gespeicherte Änderung.'), 'Keine gespeicherte Änderung.'
-        return ask(`Die gespeicherte Änderung an „${titleOf(change.entry)}“ zurücknehmen?`, 'Zurücknehmen', async () => {
-          await ws.discard(change.entry.path)
-          return 'Zurückgenommen.'
-        })
+        await ws.discard(change.entry.path)
+        logged(`Änderung an „${titleOf(change.entry)}“ zurückgenommen.`)
+        return 'Zurückgenommen.'
       }
       case 'delete_entry': {
         const found = which(call.entry)
         if ('problem' in found) return note(found.problem), found.problem
         const { entry } = found
         const refs = ws.referencesTo(entry.path)
-        return ask(`„${titleOf(entry)}“ löschen?${refs > 0 ? ` ${refs === 1 ? 'Ein Eintrag verweist' : `${refs} Einträge verweisen`} darauf; die Verweise werden entfernt.` : ''}`, 'Löschen', async () => {
-          await ws.select(entry.path)
-          return (await ws.remove()) ? `„${titleOf(entry)}“ gelöscht.` : ws.error || 'Das hat nicht geklappt.'
-        })
+        const before = ws.snapshot()
+        await ws.select(entry.path)
+        if (!(await ws.remove())) return note(ws.error || 'Das hat nicht geklappt.'), ws.error || 'Das hat nicht geklappt.'
+        done(`Gelöscht: ${titleOf(entry)}${refs > 0 ? ` (${refs === 1 ? 'ein Verweis' : `${refs} Verweise`} entfernt)` : ''}`, before)
+        return 'Gelöscht.'
       }
       case 'rename_entry':
       case 'move_entry': {
-        const found = which(call.entry)
-        if ('problem' in found) return note(found.problem), found.problem
-        const { entry } = found
-        const type = typeOf(entry)
-        if (!type || !entry.data) return note('Der Eintrag ist noch kein gültiges YAML.'), 'Kein gültiges YAML.'
-        const renaming = call.tool === 'rename_entry'
-        if (!renaming && MODEL.types[type].class !== 'entity') return note('Verschieben kann man nur Dinge mit Ordnern (Orte, Personen ...).'), 'Nur Entitäten haben Ordner.'
-
-        /** The entry with its new name, and what the change would move. */
-        const plan = () => {
-          const current = ws.entries.find((e) => e.path === entry.path)!
-          let renamed = current
-          if (renaming) {
-            const result = setField(current.text, nameFieldOf(type), call.name, readValue(current.text, nameFieldOf(type)))
-            if (!result.ok) throw new Error('Der Name lässt sich nicht setzen.')
-            renamed = withText(current, result.text)
-          }
-          const all = ws.entries.map((e) => (e.path === renamed.path ? renamed : e))
-          return { renamed, plan: planRename(renamed, all, (p) => all.some((e) => e.path === p), renaming ? undefined : call.folder) }
-        }
-        await ws.ensureAround(entry.path)
-        let preview: ReturnType<typeof plan>
-        try {
-          preview = plan()
-        } catch (error) {
-          return note((error as Error).message), (error as Error).message
-        }
-        if (!preview.plan) {
-          note(renaming ? 'Der Name ergibt dieselbe Datei; ich ändere nur den Namen im Text.' : 'Der Eintrag liegt schon dort.')
-          if (!renaming) return 'Liegt schon dort.'
-        }
-        const moves = preview.plan?.moves.length ?? 0
-        const rewrites = preview.plan?.rewrites.length ?? 0
-        const effect = preview.plan ? ` Die Datei heißt dann ${preview.plan.moves[0].after.path}${moves > 1 ? `, ${moves - 1} Einträge darunter ziehen mit` : ''}${rewrites > 0 ? `, ${rewrites} Verweise werden umgeschrieben` : ''}.` : ''
-        const question = renaming ? `„${titleOf(entry)}“ in „${call.name}“ umbenennen?${effect}` : `„${titleOf(entry)}“ in den Ordner „${call.folder}“ verschieben?${effect}`
-        return ask(question, renaming ? 'Umbenennen' : 'Verschieben', async () => {
-          const again = plan()
-          await ws.select(entry.path)
-          if (renaming) ws.edit(again.renamed.text)
-          else ws.setFolder(call.folder)
-          return (await ws.finish(() => true)) ? (renaming ? 'Umbenannt und gespeichert.' : 'Verschoben und gespeichert.') : ws.error || 'Das hat nicht geklappt.'
-        })
+        const prepared = await prepareMove(call)
+        if (typeof prepared === 'string') return prepared
+        return performMoves([prepared], call.tool === 'rename_entry' ? 'Umbenannt' : 'Verschoben')
       }
       case 'submit_draft': {
         if (!ws.draft && ws.dirty.length === 0) return note('Es gibt keine Einreichung im Entwurf, die sich vorschlagen ließe.'), 'Kein Entwurf.'
@@ -476,11 +543,14 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     }
   }
 
+  // Several renames in one answer are made together, in one commit.
+  const renames = calls.filter((c): c is Extract<ToolCall, { tool: 'rename_entry' }> => c.tool === 'rename_entry')
   for (const call of calls) {
     const before = messages.length
     let result: string | undefined
     try {
-      result = await one(call)
+      if (call.tool === 'rename_entry' && renames.length > 1) result = call === renames[0] ? await renameAll(renames) : 'Steht in der ersten Umbenennung.'
+      else result = await one(call)
     } catch (error) {
       if (error instanceof SignedOut) throw error
       result = (error as Error).message
@@ -488,5 +558,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
     }
     results.push(result ?? (messages.slice(before).map((m) => m.text).join(' ') || 'ok'))
   }
-  return { messages, results, show, more: calls.length > 0 && calls.every((c) => LOOKING.has(c.tool)) }
+  // What was done is said once: "Erledigt." (with "Rückgängig" where that is possible), the words are in the log.
+  if (log.length > 0 && !messages.some((m) => m.undo)) messages.push({ role: 'status', text: 'Erledigt.' })
+  return { messages, log, results, show, more: calls.length > 0 && calls.every((c) => LOOKING.has(c.tool)) }
 }

@@ -75,7 +75,8 @@ describe('changing a field', () => {
     expect(ws.dirty.map((e) => e.path)).toEqual([ERIKA])
     expect(ws.changes).toEqual([])
     expect(ws.openForm).toBe(ERIKA)
-    expect(texts(ws)).toEqual(['user: Beschreibe sie', 'status: Beschreibung geändert.'])
+    expect(texts(ws)).toEqual(['user: Beschreibe sie', 'status: Erledigt.'])
+    expect(ws.log.map((l) => l.text)).toEqual(['Beschreibung geändert.'])
   })
 
   it('sets the dates and the rule of an event, and refuses ones that make no sense', async () => {
@@ -124,7 +125,8 @@ describe('changing a field', () => {
     await ws.select('entities/places/feuerwehrhaus.yaml')
     await ws.send('Adresse weg')
     expect(ws.selected!.text).not.toContain('address')
-    expect(texts(ws)[1]).toBe('status: Adresse entfernt.')
+    expect(texts(ws)[1]).toBe('status: Erledigt.')
+    expect(ws.log.map((l) => l.text)).toEqual(['Adresse entfernt.'])
   })
 
   it('does not rename: name, id and type are the person\'s', async () => {
@@ -186,7 +188,8 @@ describe('setting a text', () => {
     await ws.select(TRADITION)
     await ws.send('Schreib einen Post')
     expect(ws.selected!.data!.text).toMatchObject({ teaser: 'Das Osterfeuer brennt!\n' })
-    expect(texts(ws)[1]).toBe('status: Text „Teaser“ geändert.')
+    expect(texts(ws)[1]).toBe('status: Erledigt.')
+    expect(ws.log.map((l) => l.text)).toEqual(['Text „Teaser“ geändert.'])
 
     const person = await started(new Scripted([{ tool: 'set_text', role: 'teaser', value: 'x' }]))
     await person.select(ERIKA)
@@ -206,7 +209,8 @@ describe('making an entry', () => {
     expect(entry.data).toMatchObject({ id: 'gummern/alte-faehre', name: 'Alte Fähre', description: 'Hier fuhr die Fähre.', kind: 'other' })
     expect(ws.openForm).toBe(entry.path)
     expect(ws.dirty.map((e) => e.path)).toEqual([entry.path])
-    expect(texts(ws)).toEqual(['user: Lege die Alte Fähre an', 'status: Ort „Alte Fähre“ angelegt.', 'status: Beschreibung geändert.', 'status: Typ geändert.'])
+    expect(texts(ws)).toEqual(['user: Lege die Alte Fähre an', 'status: Erledigt.'])
+    expect(ws.log.map((l) => l.text)).toEqual(['Ort „Alte Fähre“ angelegt.', 'Beschreibung geändert.', 'Typ geändert.'])
   })
 
   it('gives an entity that is made from a name only the internal tag _stub, and one with a description not', async () => {
@@ -225,7 +229,7 @@ describe('making an entry', () => {
     )
     await ws.send('Mach zwei')
     expect(ws.entries.some((e) => e.path === 'entities/places/feuerwehrhaus-2.yaml')).toBe(true)
-    expect(texts(ws).at(-1)).toContain('Ein Inhalt gehört in ein Thema')
+    expect(texts(ws).some((t) => t.includes('Ein Inhalt gehört in ein Thema'))).toBe(true)
   })
 })
 

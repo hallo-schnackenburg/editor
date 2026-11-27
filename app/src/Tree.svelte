@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { groupIndex, holds, idOf, isDirty, isGroup, newContextFor, newContextBelow, shortName, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
+  import { groupIndex, holds, idOf, isDirty, isGroup, newContextFor, newContextBelow, placeMove, shortName, siblingTarget, titleOf, typeOf, type DropTarget, type Entry, type NewContext, type PlaceMove } from './logic.js'
 
-  let { entries, folders = {}, selected, filter = '', hint, repeating, onselect, oncreate }: { entries: Entry[]; folders?: Record<string, string>; selected?: string; filter?: string; hint?: (entry: Entry) => string; repeating?: (entry: Entry) => boolean; onselect: (path: string) => void; oncreate?: (context: NewContext) => void } = $props()
+  let { entries, folders = {}, selected, filter = '', hint, repeating, canMove = false, onselect, oncreate, onmove }: { entries: Entry[]; folders?: Record<string, string>; selected?: string; filter?: string; hint?: (entry: Entry) => string; repeating?: (entry: Entry) => boolean; canMove?: boolean; onselect: (path: string) => void; oncreate?: (context: NewContext) => void; onmove?: (path: string, move: PlaceMove) => void } = $props()
 
   /** A folder. If an entry of the same name lies beside it (entities/places/gummern.yaml beside gummern/), the folder is that entry's: it is named after it and opens on its click. */
   interface Node { name: string; path: string; count: number; folders: Node[]; entries: Entry[]; entry?: Entry }
@@ -143,6 +143,72 @@
   })
 
   /** A click on a folder opens and closes it; if it has an entry, the first click also chooses that. */
+  // --- moving a place: it is dragged onto the place it is to lie in (a street, a square, a locality), onto the folder "sonstige" of one, or onto "Orte" ---
+  let dragging = $state<string>()
+  /** Where the dragged place would go if it were dropped here: the key of the row it is over, and whether it would be its sibling (dropped at its edge) or lie in it. */
+  let over = $state<string>()
+  let overBeside = $state<false | 'top' | 'bottom'>(false)
+  let openTimer: ReturnType<typeof setTimeout> | undefined
+  const dragged = $derived(dragging ? byPath.get(dragging) : undefined)
+
+  /** What a folder is as a target: its own place, else (the folder "sonstige") the place above it, else "Orte". */
+  function targetOf(node: Node, holder?: Entry): DropTarget | undefined {
+    if (node.entry) return holds(node.entry) ? { parent: node.entry } : undefined
+    if (node.name === 'sonstige') return holds(holder) ? { parent: holder, other: true } : holder ? undefined : { other: true } // of a place, or the one under "Orte"
+    if (node.path === 'entities/places') return {}
+    return undefined
+  }
+  const movableOf = (e?: Entry) => canMove && !!e && typeOf(e) === 'place'
+  /**
+   * What a row is as a target at the place of the pointer: in the middle of a place that holds others, the place itself (the dragged one
+   * lies in it); at its upper or lower edge, and anywhere on a place that holds none, the place it lies in (the dragged one becomes its sibling).
+   */
+  function aim(event: DragEvent, primary: DropTarget | undefined, own: Entry | undefined): { target: DropTarget | undefined; beside: false | 'top' | 'bottom' } {
+    const beside = siblingTarget(own, entries)
+    if (!beside) return { target: primary, beside: false }
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const at = box.height > 0 ? (event.clientY - box.top) / box.height : 0.5
+    if (primary && at >= 0.28 && at <= 0.72) return { target: primary, beside: false }
+    return { target: beside, beside: at < 0.5 ? 'top' : 'bottom' }
+  }
+  const dragProps = (e: Entry | undefined) => (movableOf(e) ? { draggable: true } : {})
+
+  function start(event: DragEvent, e: Entry) {
+    if (!event.dataTransfer) return
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', e.path)
+    dragging = e.path
+  }
+  function end() {
+    dragging = undefined
+    over = undefined
+    clearTimeout(openTimer)
+  }
+  /** Over a row that can take the dragged place: it shows that, and a closed folder opens after a moment. */
+  function hover(event: DragEvent, key: string, primary: DropTarget | undefined, own: Entry | undefined, node?: Node) {
+    const { target, beside } = aim(event, primary, own)
+    if (!dragged || !target || !placeMove(dragged, target, entries)) {
+      if (over === key) over = undefined
+      return
+    }
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    if (over !== key || overBeside !== beside) {
+      over = key
+      overBeside = beside
+      clearTimeout(openTimer)
+      if (!beside && node && node.folders.length + node.entries.length > 0 && !isOpen(node.path)) openTimer = setTimeout(() => (opened[node.path] = true), 700)
+    }
+  }
+  function drop(event: DragEvent, primary: DropTarget | undefined, own: Entry | undefined) {
+    event.preventDefault()
+    const { target } = aim(event, primary, own)
+    const move = dragged && target ? placeMove(dragged, target, entries) : undefined
+    const path = dragging
+    end()
+    if (move && path) onmove?.(path, move)
+  }
+
   function pick(node: Node) {
     if (!node.entry) return toggle(node.path)
     opened[node.path] = selected === node.entry.path ? !opened[node.path] : true
@@ -174,7 +240,9 @@
 {#snippet folder(node: Node, depth: number, parentLabel?: string, holder?: Entry)}
   {@const own = node.entry}
   {@const below = holds(own) ? own : holder}
-  <div class="row" class:active={own && selected === own.path}>
+  {@const target = targetOf(node, holder)}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="row" class:active={own && selected === own.path} class:drop={over === node.path && !overBeside} class:beside-top={over === node.path && overBeside === 'top'} class:beside-bottom={over === node.path && overBeside === 'bottom'} style:--indent="{depth * 14 + 4}px" class:dragging={own && dragging === own.path} {...dragProps(own)} ondragstart={(e) => own && start(e, own)} ondragend={end} ondragover={(e) => hover(e, node.path, target, own, node)} ondragleave={() => over === node.path && (over = undefined)} ondrop={(e) => drop(e, target, own)}>
     <button class={own ? 'entry' : 'folder'} style:padding-left="{depth * 14 + 4}px" onclick={() => pick(node)} aria-expanded={isOpen(node.path)}>
       <span class="what"><span class="t">{shortName(labelOf(node), parentLabel)}</span></span>
       {#if own && isDirty(own)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
@@ -191,7 +259,9 @@
 {/snippet}
 
 {#snippet entry(e: Entry, depth: number, parentLabel?: string)}
-  <div class="row" class:active={selected === e.path}>
+  {@const target = holds(e) ? { parent: e } : undefined}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="row" class:active={selected === e.path} class:drop={over === e.path && !overBeside} class:beside-top={over === e.path && overBeside === 'top'} class:beside-bottom={over === e.path && overBeside === 'bottom'} style:--indent="{depth * 14 + 4}px" class:dragging={dragging === e.path} {...dragProps(e)} ondragstart={(ev) => start(ev, e)} ondragend={end} ondragover={(ev) => hover(ev, e.path, target, e)} ondragleave={() => over === e.path && (over = undefined)} ondrop={(ev) => drop(ev, target, e)}>
     <button class="entry" style:padding-left="{depth * 14 + 4}px" onclick={() => onselect(e.path)}>
       <span class="what">
         <span class="line">
@@ -241,6 +311,16 @@
   .row { display: flex; align-items: center; border-radius: 6px; }
   .row:hover { background: var(--wash); }
   .row.active { background: var(--accent-wash); color: var(--accent); }
+  .row.drop { background: var(--accent-wash); outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Dropped beside a place: a line with a small circle at its start, at the edge of the row (as in a list in the Finder). */
+  .row { position: relative; }
+  .row.beside-top::after, .row.beside-bottom::after { content: ''; position: absolute; left: var(--indent); right: 0; height: 2px; background: var(--accent); pointer-events: none; }
+  .row.beside-top::before, .row.beside-bottom::before { content: ''; position: absolute; left: calc(var(--indent) - 5px); width: 6px; height: 6px; border: 2px solid var(--accent); border-radius: 50%; background: var(--paper); pointer-events: none; z-index: 1; }
+  .row.beside-top::after { top: -1px; }
+  .row.beside-top::before { top: -4px; }
+  .row.beside-bottom::after { bottom: -1px; }
+  .row.beside-bottom::before { bottom: -4px; }
+  .row.dragging { opacity: 0.45; }
   .row > button { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; text-align: left; border: 0; background: none; border-radius: 6px; padding: 3px 6px; }
   .folder { min-height: 26px; }
   .row > .num { flex: none; min-width: 2.5em; justify-content: flex-end; color: var(--muted); font-size: 12px; padding: 3px 6px 3px 0; }

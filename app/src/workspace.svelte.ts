@@ -13,7 +13,7 @@ import { Assistant } from './assistant.svelte.js'
 const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
 import { ApiError, SignedOut, type Api, type RemoteEntry, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
-import { folderOf, foldersOf, idOf, describeIssue, isMarker, issuesOf, makeEntry, makeStub, marker, nameFieldOf, newEntry, planRemoval, planRename, refsIn, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { autoAddress, planAddresses, folderOf, foldersOf, idOf, setValue, describeIssue, isMarker, issuesOf, makeEntry, makeStub, marker, nameFieldOf, newEntry, planRemoval, planRename, refsIn, shownTitle, titleOf, typeOf, withText, type Entry, type PlaceMove, type RenamePlan } from './logic.js'
 import { prepareFile, type FileEntry } from './prepare.js'
 import { MemoryTextStore, type TextStore } from './texts.js'
 import { Known, MemoryStore, type Listed, type Store, type View } from './known.js'
@@ -102,6 +102,13 @@ export interface StagedFile {
   error?: string
 }
 
+/** The entries (and renamings) at one moment, with the original texts of what was read since. */
+export interface Snapshot {
+  entries: Entry[]
+  renames: Rename[]
+  originals: Map<string, Entry>
+}
+
 export class Workspace implements Host {
   /** `undefined` until it is known whether somebody is signed in. */
   user = $state<User | null | undefined>(undefined)
@@ -157,6 +164,8 @@ export class Workspace implements Host {
   #own: string[] = []
   /** The conversation with the assistant; it lasts as long as the page. */
   chat = $state<ChatMessage[]>([])
+  /** What the assistant did, in words, with the time: the chat only says "Erledigt.". */
+  log = $state<{ time: string; text: string }[]>([])
   /** The assistant is working on a message. */
   thinking = $state(false)
   /** An entry the assistant changed or made: its form is to be opened, so that the person sees the changes and finishes them. */
@@ -760,6 +769,7 @@ export class Workspace implements Host {
       if (baseText !== undefined) this.#base = new Map(this.#base).set(path, baseText)
     }
     const read = makeEntry(path, text, fetched?.sha ?? stub.sha)
+    if (this.#originals && !this.#originals.has(path)) this.#originals.set(path, read)
     this.entries = this.entries.map((e) => (e.path === path ? read : e))
     if (this.#saved.get(path) === marker(stub.sha)) this.#saved = new Map(this.#saved).set(path, text)
   }
@@ -1000,8 +1010,9 @@ export class Workspace implements Host {
    * The person is done with the open entry: the id and the file follow its name (see `renameOpen`), and what is typed is saved. Returns
    * whether that worked; if not, `error` says why.
    */
-  async finish(confirm?: (moving: number) => boolean, options: { wait?: boolean } = {}): Promise<boolean> {
+  async finish(confirm?: (moving: number) => boolean, options: { wait?: boolean; sync?: boolean } = {}): Promise<boolean> {
     if (this.editable && this.selected) {
+      await this.#renameAddresses(this.selected)
       await this.#prepareRename(this.selected)
       const error = this.renameOpen(confirm)
       if (error) {
@@ -1009,6 +1020,8 @@ export class Workspace implements Host {
         return false
       }
     }
+    // `sync: false`: only the renaming is done, the caller saves everything together afterwards.
+    if (options.sync === false) return true
     return this.sync(options)
   }
 
@@ -1021,6 +1034,18 @@ export class Workspace implements Host {
     const saved = this.#saved.get(entry.path)
     if (type && saved !== undefined && !(entry.path in this.moveTo) && readValue(saved, nameFieldOf(type)) === entry.data?.[nameFieldOf(type)]) return undefined
     return planRename(entry, this.entries, (path) => this.entries.some((e) => e.path === path), this.moveTo[entry.path])
+  }
+
+  /** A place with another name than the saved one: the addresses below it that carry its old name follow (see `planAddresses`). */
+  async #renameAddresses(entry: Entry): Promise<void> {
+    if (typeOf(entry) !== 'place') return
+    const saved = this.#saved.get(entry.path)
+    const oldName = saved === undefined ? undefined : readValue(saved, 'name')
+    if (typeof oldName !== 'string' || oldName === entry.data?.name) return
+    const below = `entities/places/${idOf(entry)}/`
+    await this.ensure(this.entries.filter((e) => e.unloaded && e.path.startsWith(below)).map((e) => e.path))
+    const changed = new Map(planAddresses(entry, oldName, this.entries).map((c) => [c.before.path, c.after]))
+    if (changed.size > 0) this.entries = this.entries.map((e) => changed.get(e.path) ?? e)
   }
 
   /** What a renaming rewrites must be read: the entries that move with the entry, and the ones that refer to any of them. */
@@ -1165,6 +1190,47 @@ export class Workspace implements Host {
     if (!entry || !this.editable) return
     if (folder.trim() === folderOf(entry)) this.#clearMove(entry.path)
     else this.moveTo = { ...this.moveTo, [entry.path]: folder }
+  }
+
+  /**
+   * Moves a place to another place (dragged there in the tree): its parent and its folder change, and with them its id and the references to
+   * it. A house that is named after its street ("Niedernstraße 3") is named after the new one, and its address, if it was made from the
+   * name, is made again. Done and saved at once, as one change; nothing is changed if it is not possible. Returns what went wrong, in words.
+   */
+  async movePlace(path: string, move: PlaceMove, confirm?: (moving: number) => boolean): Promise<string | undefined> {
+    if (!this.editable) return this.readonlyReason
+    if (this.unsavedWork.some((e) => e.path !== path)) return 'Erst die offenen Änderungen fertigstellen, dann lässt sich der Ort verschieben.'
+    await this.select(path)
+    const entry = this.entries.find((e) => e.path === path)
+    if (!entry?.data || typeOf(entry) !== 'place') return undefined
+    const holder = move.parent ? this.entries.find((e) => idOf(e) === move.parent) : undefined
+    const before = this.entries.find((e) => idOf(e) === entry.data!.parent)
+    const addressBefore = autoAddress(entry, this.entries)
+    // What the entry is after the move, worked out on a copy: if the new id is not possible, nothing has been touched.
+    const change = (e: Entry, field: string, value: string): Entry => withText(e, setValue(e, field, 'string', value))
+    let moved = change(entry, 'parent', move.parent ?? '')
+    if (move.kind) moved = change(moved, 'kind', move.kind)
+    const name = typeof entry.data.name === 'string' ? entry.data.name : ''
+    const oldName = typeof before?.data?.name === 'string' ? before.data.name : undefined
+    const newName = typeof holder?.data?.name === 'string' ? holder.data.name : undefined
+    if ((move.kind ?? entry.data.kind) === 'building' && oldName && newName && name.startsWith(`${oldName} `) && /^\d/.test(name.slice(oldName.length + 1))) moved = change(moved, 'name', `${newName} ${name.slice(oldName.length + 1)}`)
+    const made = autoAddress(moved, this.entries.map((e) => (e.path === path ? moved : e)))
+    const have = entry.data.address
+    if (made !== undefined && (!have || have === addressBefore)) moved = change(moved, 'address', made)
+    try {
+      planRename(moved, this.entries.map((e) => (e.path === path ? moved : e)), (p) => this.entries.some((e) => e.path === p), move.folder)
+    } catch (error) {
+      return (error as Error).message
+    }
+    this.edit(moved.text)
+    this.moveTo = { ...this.moveTo, [path]: move.folder }
+    if (await this.finish(confirm, { wait: false })) return undefined
+    // It did not work (the question was answered no, or the server refused): the place is as it was.
+    const message = this.error ?? 'Der Ort konnte nicht verschoben werden.'
+    if (this.selected?.path === path) this.edit(entry.text)
+    this.#clearMove(path)
+    this.error = undefined
+    return message
   }
 
   /** The folder the open entry is in, or the one it is to go to. */
@@ -1539,6 +1605,8 @@ export class Workspace implements Host {
         })
         const outcome = await carryOut(calls, open?.path, this)
         this.chat.push(...outcome.messages)
+        const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        this.log.push(...outcome.log.map((text) => ({ time, text })))
         if (outcome.show) this.openForm = outcome.show
         if (!outcome.more) return
         const ids = calls.map((c, i) => c.id ?? `call_${step}_${i}`)
@@ -1554,6 +1622,58 @@ export class Workspace implements Host {
     } finally {
       this.thinking = false
     }
+  }
+
+  /** The entries that are read while a snapshot is taken: they are read with the text they had before anything changed them. */
+  #originals: Map<string, Entry> | undefined
+
+  /**
+   * The entries as they are now (with the renamings), to bring them back after a change of the assistant. Entries that are not read yet
+   * are kept as they get read from now on, with their original text.
+   */
+  snapshot(): Snapshot {
+    const originals = new Map<string, Entry>()
+    this.#originals = originals
+    return { entries: this.entries, renames: this.renames, originals }
+  }
+
+  /** Whether nothing was changed since the snapshot: same entries, same texts. */
+  unchangedSince(snapshot: { entries: Entry[] }): boolean {
+    const texts = new Map(snapshot.entries.map((e) => [e.path, e.text]))
+    return texts.size === this.entries.length && this.entries.every((e) => texts.get(e.path) === e.text)
+  }
+
+  /** Brings the entries back as the snapshot has them (and saves that): what was changed is as before, what was deleted is there again, what was made is gone. */
+  async restore(snapshot: Snapshot): Promise<boolean> {
+    if (!this.editable) return false
+    const now = new Map(this.entries.map((e) => [e.path, e]))
+    // An entry that was not read then has the text it was read with; one that is read now without that is kept (its first text is not known).
+    this.entries = snapshot.entries.map((e) => {
+      if (!e.unloaded) return e
+      const original = snapshot.originals.get(e.path)
+      if (original) return original
+      const current = now.get(e.path)
+      return current && !current.unloaded ? current : e
+    })
+    this.renames = snapshot.renames
+    this.moveTo = {}
+    if (this.selectedPath && !this.entries.some((e) => e.path === this.selectedPath)) this.select(undefined)
+    this.refused = []
+    return this.sync()
+  }
+
+  /** The person pressed "Rückgängig" under a change the assistant made. */
+  async undo(message: ChatMessage): Promise<void> {
+    const undo = message.undo
+    if (!undo || undo.state !== 'open') return
+    undo.state = 'running'
+    try {
+      this.chat.push({ role: 'status', text: await undo.run() })
+    } catch (error) {
+      if (error instanceof SignedOut) this.#fail(error)
+      this.chat.push({ role: 'status', text: `Das hat nicht geklappt: ${(error as Error).message}` })
+    }
+    undo.state = 'done'
   }
 
   /** The person pressed the button of a question in the chat. */

@@ -78,7 +78,7 @@ describe('what the model is asked', () => {
 
   it('has every tool the app knows, and says which ones it asks about first', () => {
     const names = TOOLS.map((t) => t.name)
-    for (const name of ['search', 'read_entry', 'open_entry', 'patch', 'save', 'delete_entry', 'rename_entry', 'move_entry', 'submit_draft', 'accept_submission', 'close_submission', 'comment_submission', 'say']) expect(names).toContain(name)
+    for (const name of ['search', 'read_entry', 'open_entry', 'patch', 'save', 'delete_entry', 'rename_entry', 'move_entry', 'submit_draft', 'accept_submission', 'close_submission', 'comment_submission', 'say', 'clarify']) expect(names).toContain(name)
     expect(new Set(names).size).toBe(names.length)
     expect(SYSTEM_PROMPT).toContain('asks the person about first')
   })
@@ -118,6 +118,13 @@ describe('what the model is asked', () => {
 
 describe('the answer of the model', () => {
   const use = (name: string, input: object) => ({ type: 'tool_use', name, input })
+
+  it('takes a question with two to four options as a clarification, and drops one without', () => {
+    const use2 = (input: object) => ({ type: 'tool_use', name: 'clarify', input })
+    expect(toToolCalls({ content: [use2({ question: 'Welche?', options: ['Alte Fähre', ' Neue Fähre ', '', 'x'.repeat(200)] })] })).toEqual([{ tool: 'clarify', question: 'Welche?', options: ['Alte Fähre', 'Neue Fähre'] }])
+    expect(toToolCalls({ content: [use2({ question: 'Welche?', options: ['Nur eine'] })] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Formuliere es bitte anders.' }])
+    expect(toToolCalls({ content: [use2({ question: 'Welche?', options: ['a', 'b', 'c', 'd', 'e'] })] })).toEqual([{ tool: 'clarify', question: 'Welche?', options: ['a', 'b', 'c', 'd'] }])
+  })
 
   it('becomes tool calls', () => {
     const calls = toToolCalls({
@@ -214,11 +221,11 @@ describe('the answer of the model', () => {
         use('say', { text: '  ' }),
       ],
     })
-    expect(calls).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }])
+    expect(calls).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Formuliere es bitte anders.' }])
   })
 
   it('has an answer even when nothing could be used', () => {
-    expect(toToolCalls({ content: [] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }])
+    expect(toToolCalls({ content: [] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Formuliere es bitte anders.' }])
     expect(toToolCalls(null)).toHaveLength(1)
   })
 })
@@ -343,6 +350,36 @@ describe('what the Worker looks up itself', () => {
     expect(second[1].content[0].content).toContain('lat 52.9921, lon 11.5612')
   })
 
+  it('calculates a plus code instead of searching for it', async () => {
+    const s = await setup([reply(lookup('find_coordinates', { query: '2HP8+RV Schnackenburg' })), reply({ type: 'text', text: 'Gefunden.' })])
+    await s.post()
+    expect(s.places).toHaveLength(0)
+    const found = s.asked[1].messages.at(-1).content[0].content as string
+    expect(found).toContain('Plus code 2HP8+RV')
+    const [, lat, lon] = found.match(/lat ([\d.]+), lon ([\d.]+)/)!.map(Number)
+    expect(Math.abs(lat - 53.037)).toBeLessThan(0.05)
+    expect(Math.abs(lon - 11.568)).toBeLessThan(0.05)
+  })
+
+  it('gives a new place the location OpenStreetMap knows when the model left it out', async () => {
+    const piece = (lat: string, lon: string) => ({ display_name: 'Alandstraße', category: 'highway', type: 'residential', lat, lon })
+    const create = (id: string, name: string, fields?: object) => ({ type: 'tool_use', id, name: 'create_entry', input: { type: 'place', name, ...(fields ? { fields } : {}) } })
+    const s = await setup([reply(create('toolu_1', 'Alandstrasse'), create('toolu_2', 'Niedernstrasse'), create('toolu_3', 'Am Markt', { location: { lat: 1, lon: 2 } }))], () => new Response(JSON.stringify([piece('53.0300', '11.5600'), piece('53.0310', '11.5620')])))
+    const { calls } = (await (await s.post()).json()) as { calls: { name: string; fields?: { location?: unknown } }[] }
+    expect(calls[0].fields?.location).toEqual({ lat: 53.03, lon: 11.56 })
+    expect(calls[1].fields?.location).toEqual({ lat: 53.03, lon: 11.56 })
+    // What the model wrote itself stays, and no search is made for it.
+    expect(calls[2].fields?.location).toEqual({ lat: 1, lon: 2 })
+    expect(s.places).toHaveLength(2)
+  })
+
+  it('leaves the location out when the matches are far apart', async () => {
+    const far = [{ lat: '53.03', lon: '11.56' }, { lat: '52.90', lon: '11.30' }]
+    const s = await setup([reply({ type: 'tool_use', id: 'toolu_1', name: 'create_entry', input: { type: 'place', name: 'Hauptstrasse' } })], () => new Response(JSON.stringify(far)))
+    const { calls } = (await (await s.post()).json()) as { calls: { fields?: unknown }[] }
+    expect(calls[0].fields).toBeUndefined()
+  })
+
   it('searches everywhere when asked to, and tells when nothing was found', async () => {
     const s = await setup([reply(lookup('find_coordinates', { query: 'Eiffelturm', anywhere: true })), reply({ type: 'text', text: 'Ich finde nichts.' })])
     await s.post()
@@ -384,7 +421,7 @@ describe('what the Worker looks up itself', () => {
   })
 
   it('does not hand these tools to the app', () => {
-    expect(toToolCalls({ content: [lookup('find_coordinates', { query: 'x' })] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }])
+    expect(toToolCalls({ content: [lookup('find_coordinates', { query: 'x' })] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Formuliere es bitte anders.' }])
   })
 })
 

@@ -53,6 +53,7 @@ export interface AgentRequest {
  */
 export type ToolCall = { id?: string } & (
   | { tool: 'say'; text: string }
+  | { tool: 'clarify'; question: string; options: string[] }
   // looking things up: the answer goes back to the assistant
   | { tool: 'search'; query: string; type?: EntryType }
   | { tool: 'read_entry'; entry: string }

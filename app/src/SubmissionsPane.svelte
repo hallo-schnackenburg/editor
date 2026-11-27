@@ -67,7 +67,7 @@
     </li>
     {#each review.shown as submission (submission.number)}
       {@const current = ws.active?.number === submission.number}
-      <li class:open={current}>
+      <li class:open={current} class:expanded={current && !folded}>
         <button class="card" onclick={() => void pick(submission)}>
           <span class="name">{submission.name}</span>
           <span class="meta muted"><span>{submission.author} · {when(submission.updated)}</span>{#if submission.state === 'draft'}<span>Entwurf</span>{/if}</span>
@@ -108,8 +108,8 @@
   li.open { border-color: var(--accent); }
   .card { display: grid; gap: 2px; width: 100%; text-align: left; border: 0; padding: 7px 8px; border-radius: 6px; background: none; }
   .card:hover { background: var(--wash); }
-  li.open .card { background: var(--accent-wash); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-  li.plain .card { border-radius: 6px; }
+  li.open .card { background: var(--accent-wash); }
+  li.expanded .card { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
   .name { font-weight: 600; }
   .meta { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px; border-top: 1px solid var(--line); }

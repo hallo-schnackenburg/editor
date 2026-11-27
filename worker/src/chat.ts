@@ -3,7 +3,7 @@
 // answers the model's calls and sends the whole trail again, so this Worker keeps nothing between requests.
 // Everything but `handleChat` is free of the network, so it can be tested on its own.
 
-import { ENTRY_TYPES, MODEL, TEXT_ROLES, type EntryType } from '@editor/core'
+import { decodePlusCode, ENTRY_TYPES, findPlusCode, MODEL, TEXT_ROLES, type EntryType } from '@editor/core'
 import { MAX_BODY, json } from './common.js'
 
 export interface ChatEnv {
@@ -60,6 +60,7 @@ export interface ChatRequest {
  */
 export type ToolCall = { id?: string } & (
   | { tool: 'say'; text: string }
+  | { tool: 'clarify'; question: string; options: string[] }
   // looking things up: the app answers, and the model goes on
   | { tool: 'search'; query: string; type?: EntryType }
   | { tool: 'read_entry'; entry: string }
@@ -226,7 +227,7 @@ Tools that look something up. The app answers, and then you go on; use them as o
 - read_entry: reads an entry's YAML (the entry is its id or its path).
 - list_changes: lists what the person's draft has saved.
 - read_submission: what a submission does (the entries it adds, changes, removes), its checks and its comments.
-- find_coordinates: looks a place up in OpenStreetMap and returns its coordinates (by default near Schnackenburg). The only source of coordinates besides the person: write them as the value of "location" ({lat, lon}) with patch. If there are several matches, ask which one is meant; if there is none, say so.
+- find_coordinates: looks a place up in OpenStreetMap and returns its coordinates (by default near Schnackenburg). A plus code (like "2HP8+RV", from Google Maps) is not searched but calculated; pass it as the query, with or without a place name. The only source of coordinates besides the person: write them as the value of "location" ({lat, lon}) with patch. If there are several matches, ask which one is meant; if there is none, say so.
 - web_search: searches the web and returns what the sources say, with their addresses. Use it for facts the person asks you to look up (opening hours, dates, history, addresses); say where it comes from, and write nothing into an entry that the sources do not say.
 
 Tools that move around: open_entry (opens it in the form), open_submission, show_own_work (back from a submission that is looked at).
@@ -238,13 +239,15 @@ Tools that change entries, as unsaved changes the person looks at and finishes w
 - attach_files: put files that were dropped into the chat into an object (the open one, or the entry given). Their names are the ones in the list of files; a file belongs to one object only.
 - rename_draft: give the person's draft another name.
 
-Tools the app asks the person about first (with a button), because they are hard to take back or others see them. Call them when the person asks for it; never say you did it, the app tells them:
-- save (like "Fertig": writes everything unsaved to the draft), discard_unsaved (throws away what is unsaved in the open entry), take_back (undoes a saved change of an entry), delete_entry, rename_entry (the id and file follow the name, what lies below moves along, references are rewritten), move_entry (to another folder, entities only), submit_draft, accept_submission, close_submission, comment_submission.
-Without an entry given they concern the open entry.
+Tools that make a change in the person's draft at once (the chat tells the person what was done, and a click on "Rückgängig" takes it back, so do not ask first): save (like "Fertig": writes everything unsaved to the draft), discard_unsaved (throws away what is unsaved in the open entry), take_back (undoes a saved change of an entry), delete_entry, rename_entry (the id and file follow the name, what lies below moves along, references are rewritten, and so do the addresses below a place), move_entry (to another folder, entities only).
+Tools the app asks the person about first (with a button), because others see the result: submit_draft, accept_submission, close_submission, comment_submission. Call them when the person asks for it; never say you did it, the app tells them.
+Without an entry given they concern the open entry. Do not ask in text before a tool; call it. For several entries call the tool for every one of them in the same answer (e.g. rename_entry once per entry); the app saves them together.
 
 Objects (the pieces of the archive: photos, letters, recordings, albums): the person drops scans or photos into the chat, and they are uploaded at once; you see their names in the state of the app. To make an object of them call create_entry with type object, kind (image: one picture; document: a letter, a protocol, ... with one file per page, in the order of the names unless the person says otherwise; audio, video; group: an album or collection, no files), name (the title), the fields the person said, and files (the names). Several files are several pages of ONE document, or several images, ask if you cannot tell. Look at the file names for hints (a date, a place), but write nothing into the object that the person did not say or that the names do not show clearly; ask for what is really needed. People, organizations and places in an object are references: search first, ask when several fit, and make an entity from its name only (create_entry, which marks it as incomplete) when there is none. After that open the object again (open_entry) to go on with it. Dates of objects are EDTF (1963, 1963-07, 196X, 1960/1969, 1963?).
 
-Do what you can at once. Never announce ("dann trage ich ... ein") that you will do something after an answer: call the tools now with everything you know, and use say only to ask for what is really missing or to answer. If something is unclear (several entries fit), ask with say instead of guessing.
+A place (the open entry or a new one) that has no location gets one at once, without being asked: call find_coordinates with its name (and the place it lies in, e.g. "Am Markt Schnackenburg") before or together with the other changes. Write the coordinates when one match clearly is the place meant; if several fit, ask which; if there is none, say so in one short sentence. Do not do this for a place that has a location already.
+
+Do what you can at once. A clear request is an order: carry it out, and decide small details yourself (how an id is spelled, what else follows from it) instead of asking about them; ask only when the request itself could mean two different things. A text alone does nothing: only tool calls change or ask for anything. Never write that you do, change, rename or create something ("ich benenne um", "ich lege an") unless the calls for it are in the same answer; call the tool and write nothing about it, the app tells what was done. Never announce ("dann trage ich ... ein") that you will do something after an answer: call the tools now with everything you know, and use say only to answer a question or to tell what is missing so that you cannot go on (two short sentences at most, never a question about whether to do what was asked). If the request itself could mean two different things (several entries fit), use clarify with the possible ways to go on as options, instead of guessing.
 
 Types and their fields (YAML keys, in English):
 ${describeTypes()}
@@ -253,12 +256,12 @@ Text roles (below "text"; at least one is needed, and a missing one is derived f
 ${describeRoles()}
 
 Rules:
-- The name or title, the id and the type of an entry are not changed with patch: use rename_entry (the person confirms).
+- The name or title, the id and the type of an entry are not changed with patch: use rename_entry. If the person gives a name that differs from the entry's, that is a rename: call rename_entry, do not try patch for the name.
 - References hold ids from the list of entities (exactly as written there). Never invent an id. If the thing is not in the list, search first (it may be there under another name); if one entry could be meant, ask which. If there is none, offer to make it from the name and the type only (create_entry): the app marks such an entry as incomplete ("Unvollständig") so that it is completed later. Do not make up more than the person said.
 - Do not invent facts: no guessed dates, names, addresses or coordinates. Write only what the person said, what is in the entry already, and what find_coordinates or web_search returned. When you write a text for the person (a description, a teaser, a post for social media), base it on the entry and what the person told you, and keep to the length of the role.
 - Never write a placeholder such as "unbekannt", "<UNKNOWN>" or "?" into a field. If you do not know a value, leave the field out.
 - Write names and places as the person gave them.
-- Always answer in German, short and friendly, addressing the person with "du". Be soft: suggest and ask ("Magst du ...?"), never demand.`
+- Always answer in German, addressing the person with "du". Write like a work tool, not like a chat partner: short and factual, no small talk, no offers or promises ("Sag Bescheid", "Soll ich ...?", "dann mache ich es"). Say what you did, or what is missing. Ask only when something is really unclear. Never ask for a confirmation in text: for what needs one the app shows a button.`
 
 const VALUE = {
   anyOf: [
@@ -285,7 +288,7 @@ export const TOOLS = [
   tool('read_entry', 'Read the YAML of an entry.', { entry: ENTRY }, ['entry']),
   tool('list_changes', 'List what the draft has saved: new, changed, renamed and deleted entries.'),
   tool('read_submission', 'What a submission does, its checks and its comments.', { number: NUMBER }, ['number']),
-  tool('find_coordinates', 'Look a place up in OpenStreetMap: its coordinates (lat, lon), name and kind. Near Schnackenburg unless "anywhere" is set.', { query: { type: 'string', description: 'What is looked for, e.g. "Aussichtsturm Schnackenburg".' }, anywhere: { type: 'boolean', description: 'Do not limit the search to the surroundings of Schnackenburg.' } }, ['query']),
+  tool('find_coordinates', 'Look a place up in OpenStreetMap: its coordinates (lat, lon), name and kind. Near Schnackenburg unless "anywhere" is set. A plus code ("2HP8+RV") in the query is calculated.', { query: { type: 'string', description: 'What is looked for, e.g. "Aussichtsturm Schnackenburg".' }, anywhere: { type: 'boolean', description: 'Do not limit the search to the surroundings of Schnackenburg.' } }, ['query']),
   tool('web_search', 'Search the web; returns what the sources say, with their addresses.', { query: { type: 'string' } }, ['query']),
   tool('open_entry', 'Open an entry in the form.', { entry: ENTRY }, ['entry']),
   tool('open_submission', 'Look at a submission.', { number: NUMBER }, ['number']),
@@ -305,18 +308,19 @@ export const TOOLS = [
     files: { type: 'array', items: { type: 'string' }, description: 'Only for an object: the names of the dropped files that belong to it.' },
   }, ['type', 'name']),
   tool('attach_files', 'Put files dropped into the chat into an object.', { files: { type: 'array', items: { type: 'string' }, description: 'Their names, as in the list of files.' }, entry: OPEN_ENTRY }, ['files']),
-  tool('rename_draft', 'Give the draft another name.', { name: { type: 'string' } }, ['name']),
-  tool('save', 'Save everything that is unsaved to the draft ("Fertig"). The person is asked first.'),
-  tool('discard_unsaved', 'Throw away what is unsaved in the open entry. The person is asked first.'),
-  tool('take_back', 'Undo a saved change of an entry (a new one disappears, a changed one is as in the database, a deleted one is back). The person is asked first.', { entry: ENTRY }, ['entry']),
-  tool('delete_entry', 'Delete an entry. The person is asked first.', { entry: OPEN_ENTRY }),
-  tool('rename_entry', 'Rename an entry: its id and file follow, what lies below it moves along, references are rewritten. The person is asked first.', { entry: OPEN_ENTRY, name: { type: 'string' } }, ['name']),
-  tool('move_entry', 'Move an entity to another folder below its type ("gummern/sonstige"); references are rewritten. The person is asked first.', { entry: OPEN_ENTRY, folder: { type: 'string' } }, ['folder']),
+  tool('rename_draft', 'Give the draft another name.', { name: { type: 'string', description: 'The new name as it is written for people ("Elbstraße"), not an id or a path.' } }, ['name']),
+  tool('save', 'Save everything that is unsaved to the draft ("Fertig"). Made at once; the person can take it back.'),
+  tool('discard_unsaved', 'Throw away what is unsaved in the open entry. Made at once; the person can take it back.'),
+  tool('take_back', 'Undo a saved change of an entry (a new one disappears, a changed one is as in the database, a deleted one is back). Made at once; the person can take it back.', { entry: ENTRY }, ['entry']),
+  tool('delete_entry', 'Delete an entry. Made at once; the person can take it back.', { entry: OPEN_ENTRY }),
+  tool('rename_entry', 'Rename an entry: its id and file follow, what lies below it moves along, references are rewritten. Made at once; the person can take it back.', { entry: OPEN_ENTRY, name: { type: 'string' } }, ['name']),
+  tool('move_entry', 'Move an entity to another folder below its type ("gummern/sonstige"); references are rewritten. Made at once; the person can take it back.', { entry: OPEN_ENTRY, folder: { type: 'string' } }, ['folder']),
   tool('submit_draft', 'Propose the submission that is a draft (it stops being a draft, and the team may accept it). The person is asked first.'),
   tool('accept_submission', 'Accept a submission, which makes it part of the database. The person is asked first.', { number: NUMBER }, ['number']),
   tool('close_submission', 'Close a submission without accepting it. The person is asked first.', { number: NUMBER }, ['number']),
   tool('comment_submission', 'Write a comment under a submission. The person is asked first.', { number: NUMBER, text: { type: 'string' } }, ['number', 'text']),
-  tool('say', 'Answer or ask the person something.', { text: { type: 'string' } }, ['text']),
+  tool('say', 'Answer a question of the person, or tell what is missing so that you cannot go on. Two short sentences at most. Never to ask whether to do what was asked, never to announce what you will do, never to repeat what a tool did.', { text: { type: 'string' } }, ['text']),
+  tool('clarify', 'Ask only if the request itself could mean two different things. Every option is a complete way to go on; the person picks one with a button.', { question: { type: 'string', description: 'One short question.' }, options: { type: 'array', items: { type: 'string' }, description: '2 to 4 short options.' } }, ['question', 'options']),
 ]
 
 export const TOOL_NAMES: string[] = TOOLS.map((t) => t.name)
@@ -386,6 +390,10 @@ type Parsed = Record<string, unknown>
 /** What each tool takes: the call if the input makes sense, else nothing. */
 const PARSERS: Record<string, (input: Parsed) => ToolCall | undefined> = {
   say: (i) => (text(i.text) ? { tool: 'say', text: text(i.text)! } : undefined),
+  clarify: (i) => {
+    const options = Array.isArray(i.options) ? i.options.map((o) => text(o)).filter((o): o is string => !!o && o.length <= 80).slice(0, 4) : []
+    return text(i.question) && options.length >= 2 ? { tool: 'clarify', question: text(i.question)!, options } : undefined
+  },
   search: (i) => (text(i.query) ? { tool: 'search', query: text(i.query)!, type: typeof i.type === 'string' && (ENTRY_TYPES as readonly string[]).includes(i.type) ? (i.type as EntryType) : undefined } : undefined),
   read_entry: (i) => (text(i.entry) ? { tool: 'read_entry', entry: text(i.entry)! } : undefined),
   list_changes: () => ({ tool: 'list_changes' }),
@@ -434,7 +442,7 @@ export function toToolCalls(response: unknown): ToolCall[] {
       if (call) calls.push(typeof block.id === 'string' ? { ...call, id: block.id } : call)
     }
   }
-  return calls.length > 0 ? calls : [{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }]
+  return calls.length > 0 ? calls : [{ tool: 'say', text: 'Das habe ich nicht verstanden. Formuliere es bitte anders.' }]
 }
 
 /** The tools the Worker carries out itself (the app never sees them). */
@@ -445,8 +453,10 @@ const MAX_LOOKUPS = 4
 /** Schnackenburg; places are looked for within about 30 km of it. */
 const HOME = { lat: 53.037, lon: 11.568, dLat: 0.27, dLon: 0.45 }
 
-/** Places from OpenStreetMap: name, kind and coordinates, as text for the model. */
-export async function findCoordinates(query: string, anywhere: boolean, fetchFn: typeof fetch): Promise<string> {
+interface Match { display_name?: string; category?: string; type?: string; lat?: string; lon?: string }
+
+/** The matches of OpenStreetMap (with coordinates), or nothing if the service is not available. */
+async function searchPlaces(query: string, anywhere: boolean, fetchFn: typeof fetch): Promise<Match[] | undefined> {
   const params = new URLSearchParams({ q: query, format: 'jsonv2', limit: '5', 'accept-language': 'de' })
   if (!anywhere) {
     params.set('viewbox', `${HOME.lon - HOME.dLon},${HOME.lat + HOME.dLat},${HOME.lon + HOME.dLon},${HOME.lat - HOME.dLat}`)
@@ -454,13 +464,45 @@ export async function findCoordinates(query: string, anywhere: boolean, fetchFn:
   }
   try {
     const response = await fetchFn(`https://nominatim.openstreetmap.org/search?${params}`, { headers: { 'user-agent': 'contents-editor (schnackenburg.de)', accept: 'application/json' } })
-    if (!response.ok) return 'The place search is not available right now.'
-    const found = (await response.json()) as { display_name?: string; category?: string; type?: string; lat?: string; lon?: string }[]
-    const lines = found.filter((f) => f.lat && f.lon).map((f) => `- ${f.display_name ?? query} (${f.category ?? '?'}/${f.type ?? '?'}): lat ${Number(f.lat)}, lon ${Number(f.lon)}`)
-    return lines.length > 0 ? lines.join('\n') : `Nothing found for "${query}"${anywhere ? '' : ' near Schnackenburg (try with anywhere, or other words)'}.`
+    if (!response.ok) return undefined
+    return ((await response.json()) as Match[]).filter((f) => f.lat && f.lon)
   } catch {
-    return 'The place search is not available right now.'
+    return undefined
   }
+}
+
+/** Places from OpenStreetMap: name, kind and coordinates, as text for the model. */
+export async function findCoordinates(query: string, anywhere: boolean, fetchFn: typeof fetch): Promise<string> {
+  // A plus code (Google Maps) is calculated, not searched; a short one is completed near Schnackenburg.
+  const code = findPlusCode(query)
+  if (code) {
+    const position = decodePlusCode(code, HOME)
+    if (position) return `- Plus code ${code.toUpperCase()}: lat ${Number(position.lat.toFixed(6))}, lon ${Number(position.lon.toFixed(6))}`
+  }
+  const found = await searchPlaces(query, anywhere, fetchFn)
+  if (!found) return 'The place search is not available right now.'
+  const lines = found.map((f) => `- ${f.display_name ?? query} (${f.category ?? '?'}/${f.type ?? '?'}): lat ${Number(f.lat)}, lon ${Number(f.lon)}`)
+  return lines.length > 0 ? lines.join('\n') : `Nothing found for "${query}"${anywhere ? '' : ' near Schnackenburg (try with anywhere, or other words)'}.`
+}
+
+/** Matches this close together (in degrees, about 1.5 km) are taken for one place: a street is found as several pieces. */
+const SAME_PLACE = 0.015
+
+/**
+ * A new place the model made without a location gets the one OpenStreetMap knows, as the model is not reliable at looking it up
+ * itself. Only if the matches agree (all close together); otherwise nothing is written.
+ */
+export async function withLocations(calls: ToolCall[], fetchFn: typeof fetch): Promise<ToolCall[]> {
+  return Promise.all(
+    calls.map(async (call) => {
+      if (call.tool !== 'create_entry' || call.type !== 'place' || call.fields?.location) return call
+      const found = await searchPlaces(`${call.name} Schnackenburg`, false, fetchFn)
+      if (!found || found.length === 0) return call
+      const [first, ...rest] = found.map((f) => ({ lat: Number(f.lat), lon: Number(f.lon) }))
+      if (rest.some((m) => Math.abs(m.lat - first.lat) > SAME_PLACE || Math.abs(m.lon - first.lon) > SAME_PLACE * 1.6)) return call
+      return { ...call, fields: { ...call.fields, location: first } }
+    }),
+  )
 }
 
 /** A search of the web: the model is asked once more, with Anthropic's search tool, and answers with what the sources say. */
@@ -547,7 +589,7 @@ export async function handleChat(request: Request, route: string, env: ChatEnv, 
     const data = await answer.json()
     // What the Worker looks up itself (coordinates, the web) is answered here, and the model goes on; the rest goes to the app.
     const own = (isRecord(data) && Array.isArray(data.content) ? data.content : []).filter((b): b is Block => isRecord(b) && b.type === 'tool_use' && typeof b.name === 'string' && OWN_TOOLS.includes(b.name))
-    if (own.length === 0 || lookups >= MAX_LOOKUPS) return json({ calls: toToolCalls(data) })
+    if (own.length === 0 || lookups >= MAX_LOOKUPS) return json({ calls: await withLocations(toToolCalls(data), fetchFn) })
     const results = await Promise.all(own.map(async (b) => ({ type: 'tool_result', tool_use_id: b.id, content: await runLookup(b, env, fetchFn) })))
     body.messages.push({ role: 'assistant', content: own }, { role: 'user', content: results })
   }

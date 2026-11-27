@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { MODEL, TEXT_ROLES, type EntryType } from '@editor/core'
-  import { idOf, nextDates, refsIn, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext } from './logic.js'
+  import { idOf, nextDates, refsIn, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext, type PlaceMove } from './logic.js'
   import { ruleText } from './ruletext.js'
   import Chat from './Chat.svelte'
   import Splitter from './Splitter.svelte'
@@ -60,6 +60,15 @@
    * The "+" at a folder: the entry is made at once, with a name to be replaced, and opens in the same form as any entry (the person
    * types the name there; "Verwerfen" takes it back). Objects (they need a type) and a new topic still ask first.
    */
+  /** A place was dragged onto another: it moves there (and is saved), or the reason it did not is shown. */
+  async function movePlace(path: string, move: PlaceMove) {
+    ws.review.detailOpen = false
+    creating = undefined
+    editingPath = undefined
+    const error = await ws.movePlace(path, move, (count) => confirm(`Das Verschieben bewegt ${count} Einträge und schreibt die Verweise darauf um. Fortfahren?`))
+    if (error) ws.error = error
+  }
+
   function create(context: NewContext) {
     leave(() => make(context))
   }
@@ -272,7 +281,7 @@
       <input type="text" placeholder="{ws.entries.length} Einträge durchsuchen ..." bind:value={filter} />
     </div>
     <!-- The new entry that is being made is not in the tree yet: until "Fertig" it only has its form. -->
-    <Tree entries={ws.entries.filter((e) => !(ws.isNew(e.path) && e.path === ws.selectedPath))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} repeating={(e) => typeOf(e) === 'event' && e.data?.recurring === true} onselect={pick} oncreate={create} />
+    <Tree entries={ws.entries.filter((e) => !(ws.isNew(e.path) && e.path === ws.selectedPath))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} repeating={(e) => typeOf(e) === 'event' && e.data?.recurring === true} canMove={ws.editable} onselect={pick} oncreate={create} onmove={movePlace} />
   </aside>
 
   <Splitter direction="vertical" value={left} min={SIDE_MIN} max={leftMax} label="Breite der Liste ändern" onchange={(v) => (left = v)} />

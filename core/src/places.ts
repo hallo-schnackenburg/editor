@@ -21,6 +21,9 @@ const WORDS: Record<string, string> = { locality: 'a locality', street: 'a stree
 /** `a street, a square or a locality` */
 const list = (kinds: readonly string[]): string => kinds.map((k) => WORDS[k]).reduce((all, w, i) => (i === 0 ? w : i === kinds.length - 1 ? `${all} or ${w}` : `${all}, ${w}`), '')
 
+/** Whether a place of this kind may lie in a place of that kind (the kind of a parent). */
+export const canLieIn = (kind: string, parentKind: string): boolean => (PARENT_KINDS[kind] ?? []).includes(parentKind)
+
 export type PlaceLookup = (id: string) => { type: string; data?: Record<string, unknown> } | undefined
 
 /** The id a place lies in (`parent`), if it has one. */

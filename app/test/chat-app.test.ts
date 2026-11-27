@@ -16,8 +16,8 @@ class Rounds implements Agent {
   }
 }
 
-async function started(agent: Agent) {
-  const ws = new Workspace(new FakeApi(), agent)
+async function started(agent: Agent, api = new FakeApi()) {
+  const ws = new Workspace(api, agent)
   await ws.start()
   ws.stopLive()
   return ws
@@ -117,54 +117,144 @@ describe('looking things up', () => {
 })
 
 describe('what asks first', () => {
-  it('saves only when the person presses the button', async () => {
+  it('saves at once and tells it', async () => {
     const agent = new Rounds(() => [{ tool: 'save' }])
     const ws = await started(agent)
     await ws.select(ERIKA)
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Speichere')
-    const [question] = confirms(ws)
-    expect(question.pending).toMatchObject({ label: 'Fertig', state: 'open' })
-    expect(ws.dirty).toHaveLength(1)
-    await ws.confirm(question)
-    expect(question.pending!.state).toBe('done')
+    expect(confirms(ws)).toHaveLength(0)
     expect(ws.dirty).toHaveLength(0)
-    expect(notes(ws).at(-1)).toBe('Gespeichert.')
+    expect(notes(ws).at(-1)).toBe('Erledigt.')
+    expect(ws.log.map((l) => l.text)).toEqual(['Eine Änderung gespeichert.'])
     expect(ws.changes.length).toBeGreaterThan(0)
   })
 
-  it('does nothing when the person does not want it, and a button works once', async () => {
+  it('deletes at once, and one click on "Rückgängig" brings the entry back', async () => {
     const agent = new Rounds(() => [{ tool: 'delete_entry', entry: 'erika-mustermann' }])
     const ws = await started(agent)
     await ws.send('Lösche Erika')
-    const [question] = confirms(ws)
-    expect(question.text).toContain('Erika')
-    ws.dismiss(question)
-    await ws.confirm(question)
-    expect(question.pending!.state).toBe('dismissed')
-    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(true)
-  })
-
-  it('deletes an entry after the yes', async () => {
-    const agent = new Rounds(() => [{ tool: 'delete_entry', entry: 'erika-mustermann' }])
-    const ws = await started(agent)
-    await ws.send('Lösche Erika')
-    await ws.confirm(confirms(ws)[0])
+    expect(confirms(ws)).toHaveLength(0)
     expect(ws.entries.some((e) => e.path === ERIKA)).toBe(false)
     expect(ws.changes.some((c) => c.kind === 'removed')).toBe(true)
+    const line = ws.chat.find((m) => m.undo)!
+    expect(line.text).toBe('Erledigt.')
+    expect(ws.log[0].text).toContain('Gelöscht: ')
+    await ws.undo(line)
+    expect(line.undo!.state).toBe('done')
+    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(true)
+    expect(ws.changes).toHaveLength(0)
+    expect(notes(ws).at(-1)).toBe('Zurückgenommen.')
+    // a second click does nothing
+    await ws.undo(line)
+    expect(notes(ws).filter((t) => t === 'Zurückgenommen.')).toHaveLength(1)
   })
 
-  it('renames an entry and tells what moves, but changes nothing before the yes', async () => {
+  it('renames at once and takes it back', async () => {
     const agent = new Rounds(() => [{ tool: 'rename_entry', entry: 'erika-mustermann', name: 'Erika Beispiel' }])
     const ws = await started(agent)
     await ws.send('Benenne Erika um')
-    const [question] = confirms(ws)
-    expect(question.text).toContain('„Erika Beispiel“')
-    expect(question.text).toContain('erika-beispiel')
-    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(true)
-    await ws.confirm(question)
+    expect(confirms(ws)).toHaveLength(0)
     expect(ws.entries.some((e) => e.path === ERIKA)).toBe(false)
     expect(ws.entries.some((e) => e.path.endsWith('erika-beispiel.yaml'))).toBe(true)
+    const line = ws.chat.find((m) => m.undo)!
+    expect(line.text).toBe('Erledigt.')
+    expect(ws.log[0].text).toMatch(/^Umbenannt: .* → Erika Beispiel$/)
+    await ws.undo(line)
+    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(true)
+    expect(ws.entries.some((e) => e.path.endsWith('erika-beispiel.yaml'))).toBe(false)
+  })
+
+  it('renames several entries of one answer together, in one commit, with one line', async () => {
+    const agent = new Rounds(() => [
+      { id: 'a', tool: 'rename_entry', entry: 'erika-mustermann', name: 'Erika Beispiel' },
+      { id: 'b', tool: 'rename_entry', entry: 'elbdeich-festplatz', name: 'Elbdeich Festwiese' },
+    ])
+    const api = new FakeApi()
+    let commits = 0
+    const commit = api.commit.bind(api)
+    api.commit = (...args) => (commits++, commit(...args))
+    const ws = await started(agent, api)
+    await ws.send('Benenne beide um')
+    expect(confirms(ws)).toHaveLength(0)
+    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(false)
+    expect(ws.entries.some((e) => e.path.endsWith('erika-beispiel.yaml'))).toBe(true)
+    expect(ws.entries.some((e) => e.path === FESTPLATZ)).toBe(false)
+    const lines = ws.chat.filter((m) => m.undo)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].text).toBe('Erledigt.')
+    expect(ws.log[0].text).toContain('→ Erika Beispiel')
+    expect(ws.log[0].text).toContain('→ Elbdeich Festwiese')
+    expect(ws.dirty).toEqual([])
+    expect(commits).toBe(1)
+    await ws.undo(lines[0])
+    expect(ws.entries.some((e) => e.path === ERIKA)).toBe(true)
+    expect(ws.entries.some((e) => e.path === FESTPLATZ)).toBe(true)
+  })
+
+  it('offers "Rückgängig" also for a new name that keeps the id', async () => {
+    const agent = new Rounds(() => [{ tool: 'rename_entry', entry: 'erika-mustermann', name: 'ERIKA MUSTERMANN' }])
+    const ws = await started(agent)
+    await ws.send('Schreib Erika groß')
+    const line = ws.chat.find((m) => m.undo)
+    expect(line).toBeDefined()
+    await ws.undo(line!)
+    expect(ws.entries.find((e) => e.path === ERIKA)?.data?.name).toBe('Erika Mustermann')
+  })
+
+  it('takes a renaming back to the name it had, and does not delete an entry that is new in the draft', async () => {
+    let calls: any[] = [{ tool: 'create_entry', type: 'place', name: 'Teststraße', fields: { kind: 'street' } }]
+    const ws = await started(new Rounds(() => calls))
+    await ws.send('Leg die Straße an')
+    const id = ws.entries.find((e) => e.data?.name === 'Teststraße')!.path
+    calls = [{ tool: 'rename_entry', entry: id, name: 'Teststrasse' }]
+    await ws.send('Benenne um')
+    expect(ws.entries.find((e) => e.path === id)?.data?.name).toBe('Teststrasse')
+    await ws.undo(ws.chat.find((m) => m.undo)!)
+    expect(ws.entries.find((e) => e.path === id)?.data?.name).toBe('Teststraße')
+    expect(ws.dirty).toEqual([])
+  })
+
+  it('does not take a change back when something was changed after it', async () => {
+    const ws = await started(new Rounds(() => [{ tool: 'rename_entry', entry: 'erika-mustermann', name: 'Erika Beispiel' }]))
+    await ws.send('Benenne Erika um')
+    const line = ws.chat.find((m) => m.undo)!
+    const renamed = ws.entries.find((e) => e.path.endsWith('erika-beispiel.yaml'))!
+    await ws.select(renamed.path)
+    ws.edit(ws.selected!.text.replace('Erika Beispiel', 'Erika B.'))
+    await ws.undo(line)
+    expect(notes(ws).at(-1)).toBe('Seitdem wurde weiter geändert; ich nehme nichts zurück.')
+    expect(ws.entries.some((e) => e.path.endsWith('erika-beispiel.yaml'))).toBe(true)
+  })
+
+  it('asks a clarification with options, and sends the chosen one as the answer', async () => {
+    const asked: string[] = []
+    const agent = new Rounds((request) => {
+      asked.push(request.message)
+      return asked.length === 1 ? [{ tool: 'clarify', question: 'Welche Erika?', options: ['Erika Mustermann', 'Erika Beispiel'] }] : [{ tool: 'say', text: 'Gut.' }]
+    })
+    const ws = await started(agent)
+    await ws.send('Öffne Erika')
+    const question = ws.chat.find((m) => m.choices)!
+    expect(question.text).toBe('Welche Erika?')
+    expect(question.choices!.options).toEqual(['Erika Mustermann', 'Erika Beispiel'])
+    question.choices!.chosen = 'Erika Beispiel'
+    await ws.send('Erika Beispiel')
+    expect(asked).toEqual(['Öffne Erika', 'Erika Beispiel'])
+  })
+
+  it('does not rename to an id or a path', async () => {
+    const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ tool: 'rename_entry', entry: 'erika-mustermann', name: 'people/erika-beispiel' }] : [{ tool: 'say', text: 'ok' }])))
+    await ws.send('Benenne Erika um')
+    expect(confirms(ws)).toHaveLength(0)
+    expect(notes(ws)).toEqual(['Das ist eine ID oder ein Pfad, kein Name; ich benenne nicht um.'])
+  })
+
+  it('shows no words of the assistant beside a question with a button', async () => {
+    const ws = await started(new Rounds(() => [{ tool: 'say', text: 'Das bestätigst du mit dem Button.' }, { tool: 'accept_submission', number: 1 }]))
+    await ws.send('Nimm #1 an')
+    expect(confirms(ws)).toHaveLength(1)
+    expect(ws.chat.some((m) => m.role === 'assistant')).toBe(false)
   })
 
   it('submits the draft', async () => {
