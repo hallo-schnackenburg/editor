@@ -93,7 +93,7 @@ describe('checking an event', () => {
   const event = (fields: object) => ({ id: 'osterfeuer', type: 'event', name: 'Osterfeuer', ...fields })
 
   it('wants a date for a one-off event, and none for a recurring one', () => {
-    expect(checkEvent(event({}))).toEqual([{ path: '/dates', message: 'a one-off event needs a date' }])
+    expect(checkEvent(event({}))).toEqual([{ path: '/dates', message: 'a one-off event needs a date', warning: true }])
     expect(checkEvent(event({ dates: [{ start: '2026-07-10', cancelled: true }] }))).toHaveLength(1)
     expect(checkEvent(event({ dates: [{ start: '2026-07-10' }] }))).toEqual([])
     expect(checkEvent(event({ recurring: true }))).toEqual([])

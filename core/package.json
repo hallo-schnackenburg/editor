@@ -16,7 +16,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "validate-repo": "tsx scripts/validate-repo.ts",
-    "build-index": "tsx scripts/build-index.ts"
+    "build-index": "tsx scripts/build-index.ts",
+    "import-wordpress": "node scripts/import-wordpress.mjs",
+    "extract-entities": "tsx scripts/extract-entities.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
@@ -27,7 +29,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "cheerio": "^1.2.0",
     "tsx": "^4.20.0",
+    "turndown": "^7.2.5",
     "typescript": "^5.9.0",
     "vitest": "^5.1.0"
   }

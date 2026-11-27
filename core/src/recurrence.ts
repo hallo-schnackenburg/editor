@@ -173,7 +173,7 @@ export function checkEvent(entry: unknown): Issue[] {
   const issues: Issue[] = []
   const recurring = e.recurring === true
   const dates = Array.isArray(e.dates) ? (e.dates as EventDate[]) : []
-  if (!recurring && dates.filter((d) => !d?.cancelled).length === 0) issues.push({ path: '/dates', message: 'a one-off event needs a date' })
+  if (!recurring && dates.filter((d) => !d?.cancelled).length === 0) issues.push({ path: '/dates', message: 'a one-off event needs a date', warning: true })
   dates.forEach((d, i) => {
     if (typeof d?.start !== 'string' || !parseWhen(d.start)) issues.push({ path: `/dates/${i}/start`, message: 'not a date' })
     else if (d.end !== undefined && (typeof d.end !== 'string' || !parseWhen(d.end))) issues.push({ path: `/dates/${i}/end`, message: 'not a date' })
