@@ -154,7 +154,7 @@ export function parseChatRequest(data: unknown): ChatRequest {
   }
 }
 
-const CHAT_TYPES = ENTRY_TYPES
+export const CHAT_TYPES = ENTRY_TYPES
 
 interface FieldDef {
   label: string
@@ -195,7 +195,7 @@ function describeField(name: string, field: FieldDef): string {
 }
 
 /** The types and their fields, as the prompt names them; made from the model, so that a new field is known at once. */
-function describeTypes(): string {
+export function describeTypes(): string {
   return CHAT_TYPES.map((type) => {
     const t = MODEL.types[type]
     const fields = Object.entries(fieldsOf(type))
@@ -372,7 +372,7 @@ export function buildModelRequest(request: ChatRequest, model: string, now: Date
   }
   return {
     model,
-    // A text for social media can be long; the rest is short.
+    // The body of a content can be long; the rest is short.
     max_tokens: 2048,
     // No temperature, top_p or top_k: Haiku 5.5 rejects them.
     system: SYSTEM_PROMPT,
@@ -443,7 +443,7 @@ const OWN_TOOLS = ['find_coordinates', 'web_search']
 const MAX_LOOKUPS = 4
 
 /** Schnackenburg; places are looked for within about 30 km of it. */
-const HOME = { lat: 52.99, lon: 11.57, dLat: 0.27, dLon: 0.45 }
+const HOME = { lat: 53.037, lon: 11.568, dLat: 0.27, dLon: 0.45 }
 
 /** Places from OpenStreetMap: name, kind and coordinates, as text for the model. */
 export async function findCoordinates(query: string, anywhere: boolean, fetchFn: typeof fetch): Promise<string> {

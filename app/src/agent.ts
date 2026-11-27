@@ -81,8 +81,26 @@ export type ToolCall = { id?: string } & (
   | { tool: 'comment_submission'; number: number; text: string }
 )
 
+/** What the form holds, and what the helper may fill (empty fields the person has not touched). `location`: coordinates from a map search. */
+export interface AssistRequest {
+  stage: 'fields' | 'location'
+  type: EntryType | null
+  data: Record<string, unknown>
+  open: string[]
+  index: IndexEntry[]
+}
+
+/** What the helper says to enter, by field, and where a value comes from if it is not a reading of the name. */
+export interface AssistAnswer {
+  type?: EntryType
+  fields: Record<string, unknown>
+  source?: Record<string, string>
+}
+
 export interface Agent {
   respond(request: AgentRequest): Promise<ToolCall[]>
+  /** Fills in a form while it is typed; stops (rejects) when `signal` is aborted. */
+  assist?(request: AssistRequest, signal?: AbortSignal): Promise<AssistAnswer>
 }
 
 const say = (text: string): ToolCall => ({ tool: 'say', text })
@@ -94,6 +112,14 @@ const say = (text: string): ToolCall => ({ tool: 'say', text })
  */
 export class FakeAgent implements Agent {
   constructor(private delay = 400) {}
+
+  /** Knows only places named in the name: "Freiwillige Feuerwehr Schnackenburg" lies in Schnackenburg. */
+  async assist(request: AssistRequest): Promise<AssistAnswer> {
+    if (this.delay > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(this.delay, 200)))
+    const name = String(request.data.name ?? request.data.title ?? '').toLowerCase()
+    const place = request.index.find((e) => e.type === 'place' && name.includes(e.name.toLowerCase()))
+    return { fields: request.stage === 'fields' && place && request.open.includes('places') ? { places: [place.id] } : {} }
+  }
 
   async respond(request: AgentRequest): Promise<ToolCall[]> {
     if (this.delay > 0) await new Promise((resolve) => setTimeout(resolve, this.delay))

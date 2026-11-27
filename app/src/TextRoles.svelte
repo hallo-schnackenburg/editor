@@ -24,7 +24,7 @@
       </span>
     </div>
     <textarea
-      rows={role === 'body' || role === 'print' ? 10 : 3}
+      rows={role === 'body' ? 10 : 3}
       value={local[role]}
       oninput={(event) => {
         local[role] = event.currentTarget.value

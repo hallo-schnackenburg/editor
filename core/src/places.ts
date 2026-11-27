@@ -3,6 +3,7 @@
 // spot, a lookout) lie in a locality or have no parent. `parent` is one id; it is a relation, not the folder the file lies in.
 // Only places that have a `kind` are checked, so that places made before the kinds existed stay valid.
 
+import { parseAddress, streetKey } from './address.js'
 import type { Issue } from './types.js'
 
 /** Which kinds a place of a kind may lie in. An empty list: it has no parent. */
@@ -45,11 +46,30 @@ export function checkParent(entry: unknown, find: PlaceLookup): Issue[] {
   if (place.type !== 'place' || typeof place.kind !== 'string' || !(place.kind in PARENT_KINDS)) return []
   const allowed = PARENT_KINDS[place.kind]
   const parentId = parentOf(place)
-  if (parentId === undefined) {
-    return NEEDS_PARENT.has(place.kind) ? [{ path: '/parent', message: `${WORDS[place.kind]} lies in ${list(allowed)}: parent is missing` }] : []
-  }
+  if (parentId === undefined) return []
   const parent = find(parentId)
   const parentKind = parent?.type === 'place' ? parent.data?.kind : undefined
   if (typeof parentKind !== 'string' || !(parentKind in PARENT_KINDS) || allowed.includes(parentKind)) return []
   return [{ path: '/parent', message: `${WORDS[place.kind]} lies in ${list(allowed)}, not in ${WORDS[parentKind]}` }]
+}
+
+/**
+ * What is merely incomplete or does not fit in a place: no parent yet where one is wanted, or an address that names another street
+ * or place than the parent. Warnings only: to be put right later, they refuse nothing.
+ */
+export function advisePlace(entry: unknown, find: PlaceLookup): Issue[] {
+  if (typeof entry !== 'object' || entry === null) return []
+  const place = entry as { type?: unknown; kind?: unknown; parent?: unknown; address?: unknown }
+  if (place.type !== 'place' || typeof place.kind !== 'string' || !(place.kind in PARENT_KINDS)) return []
+  const parentId = parentOf(place)
+  if (parentId === undefined) {
+    return NEEDS_PARENT.has(place.kind) ? [{ path: '/parent', message: `${WORDS[place.kind]} lies in ${list(PARENT_KINDS[place.kind])}: parent is missing`, warning: true }] : []
+  }
+  const parent = find(parentId)
+  const name = parent?.type === 'place' ? parent.data?.name : undefined
+  const parsed = place.kind === 'building' && typeof place.address === 'string' ? parseAddress(place.address) : undefined
+  if (parsed && typeof name === 'string' && streetKey(parsed.street) !== streetKey(name) && ['street', 'square'].includes(String(parent?.data?.kind))) {
+    return [{ path: '/address', message: `the address names ${parsed.street}, but the building lies in ${name}`, warning: true }]
+  }
+  return []
 }

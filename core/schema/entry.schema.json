@@ -267,10 +267,7 @@
         "enum": [
           "body",
           "teaser",
-          "summary",
-          "meta_description",
-          "social",
-          "print"
+          "summary"
         ]
       }
     },
@@ -682,7 +679,7 @@
           }
         },
         "about": {
-          "description": "Ids of: person, organization, place, event, thing.",
+          "description": "Ids of: person, organization, place, event, thing, content.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,

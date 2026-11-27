@@ -11,6 +11,7 @@
 // NOT YET THERE: a limit per person for the chat (until then the spending cap is set in the Anthropic workspace).
 
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
+import { handleAssist } from './assist.js'
 import { handleChat, type ChatEnv } from './chat.js'
 import { handleSubmissions } from './submissions.js'
 import { handleUpload, type UploadEnv } from './upload.js'
@@ -77,7 +78,7 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
 async function signedRoute(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response> {
   if (route === '/live' && request.method === 'GET') return live(request, env, session)
   const response =
-    (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleSubmissions(request, route, session, env, fetchFn)) ?? (await handleUpload(request, route, env, fetchFn)) ?? (await handleActivity(request, route, session, env)) ?? (await handleChat(request, route, env, fetchFn))
+    (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleSubmissions(request, route, session, env, fetchFn)) ?? (await handleUpload(request, route, env, fetchFn)) ?? (await handleActivity(request, route, session, env)) ?? (await handleAssist(request, route, session, env, fetchFn)) ?? (await handleChat(request, route, env, fetchFn))
   return response ?? json({ error: 'Not found.' }, 404, env)
 }
 

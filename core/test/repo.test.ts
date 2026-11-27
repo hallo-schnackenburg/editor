@@ -16,11 +16,11 @@ describe('validateRepo', () => {
 
   it('finds a reference that leads nowhere, or to the wrong kind of entry', () => {
     const all = files().map((f) =>
-      f.path.endsWith('osterfeuer-tradition.yaml') ? { ...f, text: f.text.replace('about: [osterfeuer, feuerwehr-schnackenburg]', 'about: [osterfeuer, gibts-nicht, osterfeuer-tradition]') } : f,
+      f.path.endsWith('osterfeuer-tradition.yaml') ? { ...f, text: f.text.replace('about: [osterfeuer, feuerwehr-schnackenburg]', 'about: [osterfeuer, gibts-nicht, 01kb4z8m3q7xv2n5r6t9c0d1ae]') } : f,
     )
     const [problem] = validateRepo(all)
     expect(problem.path).toBe('contents/traditionen/osterfeuer-tradition.yaml')
-    expect(problem.issues.map((i) => i.message)).toEqual(['"gibts-nicht" does not exist', expect.stringMatching(/osterfeuer-tradition/)])
+    expect(problem.issues.map((i) => i.message)).toEqual(['"gibts-nicht" does not exist', expect.stringMatching(/01kb4z8m3q7xv2n5r6t9c0d1ae/)])
   })
 
   it('finds an id that is used twice, and an entry that is not where its id says', () => {
@@ -113,5 +113,17 @@ describe('validateRepo and what is only incomplete', () => {
     const issues = problems.find((p) => p.path === loose.path)?.issues ?? []
     expect(issues.some((i) => i.path === '/parents' && i.warning === true)).toBe(true)
     expect(issues.filter((i) => !i.warning)).toEqual([])
+  })
+})
+
+describe('validateRepo and an address that does not fit its street', () => {
+  const place = (id: string, extra: string) => ({ path: `entities/places/${id}.yaml`, text: `id: ${id}\ntype: place\nname: ${id}\n${extra}` })
+  const tree = [place('schnackenburg', 'kind: locality\n'), { ...place('schnackenburg/niedernstrasse', 'kind: street\nparent: schnackenburg\n'), text: 'id: schnackenburg/niedernstrasse\ntype: place\nname: Niedernstraße\nkind: street\nparent: schnackenburg\n' }]
+
+  it('warns when the address names another street than the parent, and only warns', () => {
+    const house = (address: string) => place('schnackenburg/niedernstrasse/3', `kind: building\nparent: schnackenburg/niedernstrasse\naddress: ${address}\n`)
+    const issues = (address: string) => validateRepo([...files(), ...tree, house(address)]).flatMap((p) => p.issues)
+    expect(issues('Niedernstr. 3, 29493 Schnackenburg')).toEqual([])
+    expect(issues('Alandstraße 7, 29493 Schnackenburg')).toEqual([{ path: '/address', message: 'the address names Alandstraße, but the building lies in Niedernstraße', warning: true }])
   })
 })

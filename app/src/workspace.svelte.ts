@@ -7,6 +7,7 @@
 
 import { FOLDER_PATH, MODEL, mergeObject, readValue, setField, slugify, submissionBranch, type EntryType, type IndexEntry as Line, type Issue } from '@editor/core'
 import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
+import { Assistant } from './assistant.svelte.js'
 
 /** How many times the assistant may look things up for one message. */
 const MAX_STEPS = 8
@@ -205,11 +206,14 @@ export class Workspace implements Host {
   #queue: Promise<unknown> = Promise.resolve()
 
   readonly #agent: Agent | undefined
+  /** Fills in the open form while the person types. */
+  readonly assistant: Assistant
 
   constructor(api: Api, agent?: Agent, store: Store = new MemoryStore(), texts: TextStore = new MemoryTextStore()) {
     this.#api = api
     this.#texts = texts
     this.#agent = agent
+    this.assistant = new Assistant(this, agent)
     this.#store = store
     this.review = new Review(api, this)
   }

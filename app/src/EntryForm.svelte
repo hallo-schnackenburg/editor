@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { MODEL, setField, type TextRole } from '@editor/core'
-  import { autoAddress, excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
+  import { autoAddress, similarEntries, fullName, holderOf, idOf, excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
   import RefField from './RefField.svelte'
   import LinksField from './LinksField.svelte'
@@ -43,6 +43,7 @@
   const subtypes = $derived(kinds?.[String(data('kind'))]?.subtypes ?? {})
   // The subtype belongs to the kind: when the kind changes, a subtype of the old one goes.
   function setKind(value: string) {
+    ws.assistant.touch(entry.path, 'kind')
     const first = setField(entry.text, 'kind', value || undefined, entry.data?.kind)
     if (!first.ok) return
     let text = first.text
@@ -52,6 +53,7 @@
       if (second.ok) text = second.text
     }
     ws.edit(text)
+    ws.assistant.nudge(entry.path)
   }
   function setSubtype(value: string) {
     const result = setField(entry.text, 'subtype', value || undefined, entry.data?.subtype)
@@ -64,16 +66,41 @@
     for (const e of ws.entries) for (const t of Array.isArray(e.data?.tags) ? e.data.tags : []) if (typeof t === 'string' && !t.startsWith('_')) count.set(t, (count.get(t) ?? 0) + 1)
     return [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t)
   })
-  const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
-  /** The name of a building ("Gummern 3") makes its address, as long as the address is empty or was made like this before. */
+  /** A change by the person: the field is theirs from now on, and the helper looks again after a moment. */
+  /** A new entry whose name is the same or alike as that of one there is already: a hint to look at it first. */
+  const similar = $derived(entry.sha === undefined ? similarEntries(entry, ws.entries) : [])
+  const set = (name: string, kind: FieldKind, value: unknown) => {
+    ws.assistant.touch(entry.path, name)
+    ws.edit(setValue(entry, name, kind, value))
+    ws.assistant.nudge(entry.path)
+  }
+  /**
+   * What the name or the address of a place settles by itself: a house that lies in no place yet goes where its address says (the
+   * parent, the kind, and the folder follows), and the address is made from the name as long as it is empty or was made like this before.
+   */
   function setName(name: string, value: string) {
     const before = autoAddress(entry, ws.entries)
     set(name, 'string', value)
-    const now = ws.selected
+    let now = ws.selected
+    if (!now || now.path !== entry.path) return
+    const found = holderOf(now, ws.entries)
+    if (found) {
+      ws.edit(setValue(now, 'parent', 'string', idOf(found.parent)))
+      now = ws.selected
+      if (now && now.data?.kind === undefined) ws.edit(setValue(now, 'kind', 'string', 'building'))
+      ws.setFolder(idOf(found.parent))
+      now = ws.selected
+    }
     if (!now || now.path !== entry.path) return
     const made = autoAddress(now, ws.entries)
     const have = now.data?.address
     if (made !== (typeof have === 'string' ? have : undefined) && (!have || have === before) && (made !== undefined || have === before)) ws.edit(setValue(now, 'address', 'string', made ?? ''))
+  }
+  /** A house named only by its number gets the full name when the field is left ("3" in Niedernstraße becomes "Niedernstraße 3"). */
+  function fullNameOf(name: string) {
+    const now = ws.selected
+    const full = now && fullName(now, ws.entries)
+    if (now && full && full !== now.data?.[name]) ws.edit(setValue(now, name, 'string', full))
   }
   // An event that is not recurring has neither a schedule nor a rule: they go when "wiederkehrend" is switched off.
   function setFlag(name: string, on: boolean) {
@@ -157,14 +184,18 @@
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
         {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true) && applies(field) && !(name === 'files' && noFiles)}
-        <div class="field" class:bad={forField(name).length > 0}>
+        {@const made = ws.assistant.filled[entry.path]?.[name]}
+        <div class="field" class:bad={forField(name).length > 0} class:ai={!!made} data-at={made?.at}>
           {#if kind !== 'text'}
-            <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}</label>
+            <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}{#if made}<button type="button" class="spark" title={`Vom Assistenten eingetragen${made.source ? ` (${made.source})` : ''}: zurücknehmen`} aria-label="Eintrag des Assistenten zurücknehmen" onclick={() => ws.assistant.undo(entry.path, name)}>✦</button>{/if}</label>
           {/if}
           {#if kind === 'string' && (field as { multiline?: boolean }).multiline}
             <textarea id={`f-${name}`} rows="5" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)}></textarea>
           {:else if kind === 'string'}
-            <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => (name === labelField && type === 'place' ? setName(name, event.currentTarget.value) : set(name, kind, event.currentTarget.value))} />
+            <input id={`f-${name}`} type="text" autocomplete="off" value={data(name) ?? ''} oninput={(event) => ((name === labelField || name === 'address') && type === 'place' ? setName(name, event.currentTarget.value) : set(name, kind, event.currentTarget.value))} onchange={() => name === labelField && type === 'place' && fullNameOf(name)} />
+            {#if name === labelField && similar.length > 0}
+              <div class="similar"><span>Ähnlich:</span>{#each similar as other (other.path)}<button type="button" onclick={() => ws.select(other.path)}>{titleOf(other)}</button>{/each}</div>
+            {/if}
           {:else if kind === 'choice'}
             <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => (name === 'kind' && kinds ? setKind(event.currentTarget.value) : set(name, 'string', event.currentTarget.value))}>
               <option value="">–</option>
@@ -263,4 +294,15 @@
   .yaml { min-height: 28rem; }
   input[type='checkbox'] { width: auto; }
   select { width: auto; min-width: 12rem; }
+  .spark { margin-left: 6px; padding: 0 4px; border: 0; background: none; color: var(--accent, #3b5bdb); font-size: 12px; line-height: 1; cursor: pointer; opacity: 0.75; }
+  .spark:hover { opacity: 1; }
+  .field.ai { animation: ai-pulse 1.6s ease-out 1; border-radius: 6px; }
+  @keyframes ai-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(59, 91, 219, 0.45); background: rgba(59, 91, 219, 0.1); }
+    100% { box-shadow: 0 0 0 10px rgba(59, 91, 219, 0); background: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) { .field.ai { animation: none; } }
+  .similar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--muted, #667); }
+  .similar button { padding: 1px 8px; border: 1px solid var(--line, #d0d4dc); border-radius: 999px; background: none; color: inherit; font: inherit; cursor: pointer; }
+  .similar button:hover { border-color: var(--accent, #3b5bdb); color: var(--accent, #3b5bdb); }
 </style>

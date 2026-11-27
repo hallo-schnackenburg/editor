@@ -152,7 +152,10 @@ export const MODEL = {
           "label": "PLZ",
           "kind": "string",
           "required": false,
-          "description": "Holds for the place and for everything below it (the nearest place above that has one counts): the address of a building is made of its name, this code and the name of the place that has it."
+          "description": "Holds for the place and for everything below it (the nearest place above that has one counts): the address of a building is made of its name, this code and the name of the place that has it.",
+          "applies": [
+            "locality"
+          ]
         },
         "links": {
           "label": "Links",
@@ -308,7 +311,7 @@ export const MODEL = {
           ]
         },
         "about": {
-          "label": "Handelt von",
+          "label": "Bezüge",
           "kind": "ref",
           "required": false,
           "ref": [
@@ -316,9 +319,10 @@ export const MODEL = {
             "organization",
             "place",
             "event",
-            "thing"
+            "thing",
+            "content"
           ],
-          "description": "Any entity. The type of the entry it points to says what it is."
+          "description": "Everything the content refers to: any entity, or another content. One field for all; the type of the entry it points to says what it is, and who refers to an entry is derived (the index, `refs`)."
         },
         "objects": {
           "label": "Objekte",
@@ -649,31 +653,6 @@ export const MODEL = {
       "fallback": [
         "teaser"
       ]
-    },
-    "meta_description": {
-      "label": "Meta-Beschreibung",
-      "max": 160,
-      "fallback": [
-        "summary",
-        "teaser"
-      ],
-      "description": "For search engines and link previews."
-    },
-    "social": {
-      "label": "Social Media",
-      "max": 2200,
-      "fallback": [
-        "teaser",
-        "summary"
-      ],
-      "description": "To be defined with the person in charge of social media."
-    },
-    "print": {
-      "label": "Print",
-      "fallback": [
-        "body"
-      ],
-      "description": "For the Amtsblatt, notices, newspapers."
     }
   }
 } as const

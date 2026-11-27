@@ -4,7 +4,7 @@
 import { adviseObject, checkRefs, type Lookup } from './consistency.js'
 import { validateFolderYaml } from './folder.js'
 import { checkGroups } from './groups.js'
-import { checkParent } from './places.js'
+import { advisePlace, checkParent } from './places.js'
 import { checkEvent } from './recurrence.js'
 import { ENTRY_PATH, FOLDER_PATH, checkPath } from './paths.js'
 import type { Issue } from './types.js'
@@ -62,7 +62,7 @@ export function validateRepo(files: RepoFile[]): RepoProblem[] {
     else index.set(id, { type: String(data.type), path, data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkGroups(data, lookup), ...checkEvent(data), ...adviseObject(data)]) add(path, issue)
+  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup), ...checkGroups(data, lookup), ...checkEvent(data), ...adviseObject(data), ...advisePlace(data, lookup)]) add(path, issue)
 
   return [...problems].map(([path, issues]) => ({ path, issues })).sort((a, b) => a.path.localeCompare(b.path))
 }

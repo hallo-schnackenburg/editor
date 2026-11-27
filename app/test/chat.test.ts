@@ -182,13 +182,13 @@ describe('changing a field', () => {
 
 describe('setting a text', () => {
   it('sets one role of a content, and only of one that has texts', async () => {
-    const ws = await started(new Scripted([{ tool: 'set_text', role: 'social', value: 'Das Osterfeuer brennt!' }]))
+    const ws = await started(new Scripted([{ tool: 'set_text', role: 'teaser', value: 'Das Osterfeuer brennt!' }]))
     await ws.select(TRADITION)
     await ws.send('Schreib einen Post')
-    expect(ws.selected!.data!.text).toMatchObject({ social: 'Das Osterfeuer brennt!\n' })
-    expect(texts(ws)[1]).toBe('status: Text „Social Media“ geändert.')
+    expect(ws.selected!.data!.text).toMatchObject({ teaser: 'Das Osterfeuer brennt!\n' })
+    expect(texts(ws)[1]).toBe('status: Text „Teaser“ geändert.')
 
-    const person = await started(new Scripted([{ tool: 'set_text', role: 'social', value: 'x' }]))
+    const person = await started(new Scripted([{ tool: 'set_text', role: 'teaser', value: 'x' }]))
     await person.select(ERIKA)
     await person.send('Post')
     expect(person.dirty).toEqual([])

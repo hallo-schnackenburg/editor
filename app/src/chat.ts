@@ -7,7 +7,7 @@
 import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
-import { autoAddress, idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'
+import { autoAddress, holderOf, idOf, nameFieldOf, planRename, setValue, titleOf, typeOf, withFile, withText, type Entry } from './logic.js'
 import type { FileEntry } from './prepare.js'
 import type { Workspace } from './workspace.svelte.js'
 
@@ -352,6 +352,15 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         note(`${MODEL.types[call.type].label} „${call.name}“ angelegt.`)
         for (const [field, value] of Object.entries(call.fields ?? {})) patch(path, field, value, undefined, true)
         if (call.type === 'object' && call.files?.length) attach(path, call.files)
+        // A house that lies in no place yet goes where its name or address says (the parent and the kind; the folder follows).
+        const homeless = ws.entries.find((e) => e.path === path)
+        const holder = homeless && holderOf(homeless, ws.entries)
+        if (homeless && holder) {
+          ws.edit(setValue(homeless, 'parent', 'string', idOf(holder.parent)))
+          const moved = ws.entries.find((e) => e.path === path)
+          if (moved && moved.data?.kind === undefined) ws.edit(setValue(moved, 'kind', 'string', 'building'))
+          if (ws.selectedPath === path) ws.setFolder(idOf(holder.parent))
+        }
         // A building named like "Gummern 3" in a place gets its address from there (unless the chat gave one).
         const placed = ws.entries.find((e) => e.path === path)
         const address = placed && !('address' in (call.fields ?? {})) ? autoAddress(placed, ws.entries) : undefined

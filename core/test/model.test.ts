@@ -16,7 +16,7 @@ describe('contents.yaml', () => {
 
   it('lists the types and the text roles', () => {
     expect(ENTRY_TYPES).toEqual(['person', 'organization', 'place', 'event', 'thing', 'content', 'object'])
-    expect(TEXT_ROLES).toEqual(['body', 'teaser', 'summary', 'meta_description', 'social', 'print'])
+    expect(TEXT_ROLES).toEqual(['body', 'teaser', 'summary'])
     expect(MODEL.types.object.subtypes).toHaveProperty('photo', 'Foto')
     expect(MODEL.types.object.kinds.group.files).toEqual({ max: 0 })
   })

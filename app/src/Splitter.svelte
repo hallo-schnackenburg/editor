@@ -16,12 +16,22 @@
 
   function down(event: PointerEvent) {
     const bar = event.currentTarget as HTMLElement
+    // Dragging must not select text in the panes next to it (that flashes blue): nothing is selectable until the bar is let go.
+    event.preventDefault()
+    bar.focus()
+    const body = document.body
+    const before = { select: body.style.userSelect, cursor: body.style.cursor }
+    body.style.userSelect = 'none'
+    body.style.cursor = direction === 'vertical' ? 'col-resize' : 'row-resize'
+    getSelection()?.removeAllRanges()
     const vertical = direction === 'vertical'
     const start = vertical ? event.clientX : event.clientY
     const from = value
     bar.setPointerCapture(event.pointerId)
     const move = (e: PointerEvent) => onchange(clamp(from + (invert ? -1 : 1) * ((vertical ? e.clientX : e.clientY) - start)))
     const stop = () => {
+      body.style.userSelect = before.select
+      body.style.cursor = before.cursor
       bar.removeEventListener('pointermove', move)
       bar.removeEventListener('pointerup', stop)
       bar.removeEventListener('pointercancel', stop)

@@ -21,8 +21,10 @@
 <div class="chips">
   {#each value as id (id)}
     {@const target = byId.get(id)}
+    {@const kind = target ? typeOf(target) : undefined}
     <span class="chip" class:missing={!target}>
       {target ? titleOf(target) : `${id} (fehlt)`}
+      {#if kind && targets.length > 1}<small>{MODEL.types[kind].label}</small>{/if}
       <button type="button" title="Entfernen" onclick={() => onchange(value.filter((v) => v !== id))}>×</button>
     </span>
   {/each}
@@ -34,6 +36,7 @@
 <style>
   .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-wash); color: var(--accent); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 14px; }
+  .chip small { opacity: 0.65; font-size: 12px; }
   .chip.missing { background: var(--bad-wash); color: var(--bad); }
   .chip button { border: 0; background: none; padding: 0 6px; color: inherit; font-size: 16px; line-height: 1; }
 </style>

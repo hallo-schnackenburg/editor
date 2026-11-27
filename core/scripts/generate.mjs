@@ -52,7 +52,7 @@ export function read(yamlText) {
       if (!isRecord(spec) || typeof spec.label !== 'string' || !(isRecord(spec.schema) !== Array.isArray(spec.ref))) fail(`types.${type}.fields.${field} needs a label and either a schema or a ref (a list of types).`)
       if (spec.single !== undefined && !(spec.ref && spec.single === true && spec.max === undefined)) fail(`types.${type}.fields.${field}: single (true) belongs to a ref and excludes max.`)
       for (const target of spec.ref ?? []) if (!(target in data.types)) fail(`types.${type}.fields.${field}.ref: "${target}" is not a type.`)
-      for (const kind of spec.applies ?? []) if (!(kind in (t.kinds ?? {}))) fail(`types.${type}.fields.${field}.applies: "${kind}" is not a kind.`)
+      for (const kind of spec.applies ?? []) if (!(kind in (t.kinds ?? {})) && !(t.fields?.kind?.schema?.enum ?? []).includes(kind)) fail(`types.${type}.fields.${field}.applies: "${kind}" is not a kind.`)
       for (const [part, prop] of Object.entries(spec.schema?.properties ?? {})) {
         if (prop?.ref === undefined) continue
         if (typeof prop.label !== 'string') fail(`types.${type}.fields.${field}.${part} needs a label.`)

@@ -15,7 +15,7 @@
 # entities/<type>/ are free, the authors arrange them as they like (entities/places/gummern/3.yaml has the id gummern/3).
 #
 # Open, on purpose: licenses (a list, later), the fields of the entities beyond the bare minimum, which types the
-# reference fields accept (shown as `ref:` with a first guess), collections, `social` in more detail.
+# reference fields accept (shown as `ref:` with a first guess), collections.
 # What an object is, and how it relates to the archive's model, is in doc/modell.md.
 
 schema:
@@ -134,6 +134,7 @@ types:
         label: PLZ
         description: "Holds for the place and for everything below it (the nearest place above that has one counts): the address of a building is made of its name, this code and the name of the place that has it."
         schema: { type: string, pattern: '^\d{5}$' }
+        applies: [locality]
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -227,9 +228,9 @@ types:
         label: Autoren
         ref: [person, organization]
       about:
-        label: Handelt von
-        description: "Any entity. The type of the entry it points to says what it is."
-        ref: [person, organization, place, event, thing]
+        label: Bezüge
+        description: "Everything the content refers to: any entity, or another content. One field for all; the type of the entry it points to says what it is, and who refers to an entry is derived (the index, `refs`)."
+        ref: [person, organization, place, event, thing, content]
       objects:
         label: Objekte
         ref: [object]
@@ -396,20 +397,6 @@ text_roles:
     label: Zusammenfassung
     max: 300
     fallback: [teaser]
-  meta_description:
-    label: Meta-Beschreibung
-    description: "For search engines and link previews."
-    max: 160
-    fallback: [summary, teaser]
-  social:
-    label: Social Media
-    description: "To be defined with the person in charge of social media."
-    max: 2200
-    fallback: [teaser, summary]
-  print:
-    label: Print
-    description: "For the Amtsblatt, notices, newspapers."
-    fallback: [body]
 
 defs:
   edtf:

@@ -87,7 +87,7 @@ describe('what the model is asked', () => {
     expect(SYSTEM_PROMPT).toContain('place (Ort, entity)')
     expect(SYSTEM_PROMPT).toContain('description (Beschreibung')
     expect(SYSTEM_PROMPT).toContain('kind (Typ: one of: locality (Ort)')
-    expect(SYSTEM_PROMPT).toContain('social (Social Media), at most 2200 characters')
+    expect(SYSTEM_PROMPT).toContain('teaser (Teaser), at most 200 characters')
     expect(SYSTEM_PROMPT).toContain('(Objekt, object)')
     const create = TOOLS.find((t) => t.name === 'create_entry')!.input_schema.properties as any
     expect(create.type.enum).toContain('object')
@@ -123,7 +123,7 @@ describe('the answer of the model', () => {
     const calls = toToolCalls({
       content: [
         use('patch', { field: 'description', value: 'Der Sportplatz.', old: undefined }),
-        use('set_text', { role: 'social', value: 'Heute!' }),
+        use('set_text', { role: 'teaser', value: 'Heute!' }),
         use('create_entry', { type: 'place', name: ' Alte Fähre ', folder: 'gummern', fields: { description: 'Fähre' } }),
         use('say', { text: 'Fertig.' }),
         { type: 'text', text: 'Und noch etwas.' },
@@ -131,7 +131,7 @@ describe('the answer of the model', () => {
     })
     expect(calls).toEqual([
       { tool: 'patch', field: 'description', value: 'Der Sportplatz.', old: undefined },
-      { tool: 'set_text', role: 'social', value: 'Heute!' },
+      { tool: 'set_text', role: 'teaser', value: 'Heute!' },
       { tool: 'create_entry', type: 'place', name: 'Alte Fähre', folder: 'gummern', fields: { description: 'Fähre' }, kind: undefined, files: undefined },
       { tool: 'say', text: 'Fertig.' },
       { tool: 'say', text: 'Und noch etwas.' },

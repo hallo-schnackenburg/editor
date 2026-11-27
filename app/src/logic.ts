@@ -2,7 +2,7 @@
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
 import type { FileEntry } from './prepare.js'
-import { MODEL, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@editor/core'
+import { MODEL, parseAddress, streetKey, checkEvent, checkGroups, occurrences, checkParent, checkPath, checkRefs, refsOf, entryPath, objectId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type IndexEntry as Line, type Issue, type Lookup } from '@editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -338,6 +338,55 @@ export function newContextBelow(e: Entry): NewContext | undefined {
   return holds(e) ? { type: 'place', folder: idOf(e), parent: idOf(e), kind: kindIn(e, idOf(e)) } : undefined
 }
 
+/** How far apart two words are: the number of letters to change, add or take away. */
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1))
+      diagonal = above
+    }
+  }
+  return row[b.length]
+}
+
+/** How alike two names are, 0 (not at all) to 3 (the same): the same words, one inside the other, or the same stem ("Aussichtsturm", "Aussichtspunkt"). */
+function likeness(a: string, b: string): number {
+  if (!a || !b) return 0
+  if (a === b) return 3
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a]
+  if (short.length >= 5 && long.includes(short)) return 2
+  if (short.length >= 6 && distance(a, b) <= 2) return 2
+  let prefix = 0
+  while (prefix < short.length && short[prefix] === long[prefix]) prefix++
+  return prefix >= 7 && prefix >= short.length * 0.6 ? 1 : 0
+}
+
+/**
+ * The entries of the same type that a new entry may be a second one of: its name is the same or alike (written differently, one inside the
+ * other, the same stem). The best first, at most `limit`. Only a hint: nothing is refused.
+ */
+export function similarEntries(entry: Entry, entries: readonly Entry[], limit = 3): Entry[] {
+  const type = typeOf(entry)
+  if (!type || MODEL.types[type].class !== 'entity') return []
+  const own = entry.data?.[nameFieldOf(type)]
+  const key = typeof own === 'string' ? streetKey(own) : ''
+  if (key.length < 4) return []
+  return entries
+    .flatMap((e) => {
+      const name = e.data?.[nameFieldOf(type)]
+      if (e.path === entry.path || typeOf(e) !== type || typeof name !== 'string') return []
+      const score = likeness(key, streetKey(name))
+      return score > 0 ? [{ e, score }] : []
+    })
+    .sort((a, b) => b.score - a.score || titleOf(a.e).localeCompare(titleOf(b.e)))
+    .slice(0, limit)
+    .map((x) => x.e)
+}
+
 /** The name of an entry under the entry its folder is named after: "Am Markt 3" under "Am Markt" is "Nr. 3". */
 export function shortName(name: string, parentName?: string): string {
   if (parentName && name.length > parentName.length + 1 && name.startsWith(`${parentName} `)) {
@@ -345,6 +394,59 @@ export function shortName(name: string, parentName?: string): string {
     return /^\d/.test(rest) ? `Nr. ${rest}` : rest
   }
   return name
+}
+
+const HOLDERS = ['street', 'square', 'locality']
+
+/**
+ * The place a house with this address lies in: the one street, square or locality of that name (in the town named after the comma,
+ * if there is one). Nothing if there is none or more than one, so a wrong guess is never made.
+ */
+export function findHolder(street: string, town: string | undefined, entries: readonly Entry[]): Entry | undefined {
+  const key = streetKey(street)
+  if (!key) return undefined
+  const places = entries.filter((e) => typeOf(e) === 'place')
+  const byId = new Map(places.map((e) => [idOf(e), e]))
+  let found = places.filter((e) => HOLDERS.includes(String(e.data?.kind)) && typeof e.data?.name === 'string' && streetKey(e.data.name) === key)
+  if (town) {
+    const townKey = streetKey(town)
+    const inTown = found.filter((e) => {
+      const seen = new Set<string>()
+      for (let at: Entry | undefined = e; at && !seen.has(idOf(at)); at = typeof at.data?.parent === 'string' ? byId.get(at.data.parent) : undefined) {
+        seen.add(idOf(at))
+        if (typeof at.data?.name === 'string' && streetKey(at.data.name) === townKey) return true
+      }
+      return false
+    })
+    if (inTown.length > 0) found = inTown
+  }
+  return found.length === 1 ? found[0] : undefined
+}
+
+/**
+ * Where a house belongs, as its address (or else its name) says: "Niedernstraße 3" is in the street Niedernstraße. Only for a
+ * building (or a place of no kind yet), and only if it lies in no place yet.
+ */
+export function holderOf(entry: Entry, entries: readonly Entry[]): { parent: Entry; number: string } | undefined {
+  const d = entry.data
+  if (typeOf(entry) !== 'place' || !d || (d.kind !== undefined && d.kind !== 'building') || (typeof d.parent === 'string' && d.parent)) return undefined
+  for (const text of [d.address, d.name]) {
+    if (typeof text !== 'string') continue
+    const parsed = parseAddress(text)
+    const parent = parsed && findHolder(parsed.street, parsed.town, entries)
+    if (parsed && parent && idOf(parent) !== idOf(entry)) return { parent, number: parsed.number }
+  }
+  return undefined
+}
+
+/** A building named only by its number ("3") in a street or place is named after it: "Niedernstraße 3". Else its own name. */
+export function fullName(entry: Entry, entries: readonly Entry[]): string | undefined {
+  const d = entry.data
+  if (typeOf(entry) !== 'place' || d?.kind !== 'building' || typeof d.name !== 'string' || typeof d.parent !== 'string') return undefined
+  const name = d.name.trim()
+  if (!/^\d+[a-zA-Z]?$/.test(name)) return name
+  const parent = entries.find((e) => idOf(e) === d.parent)
+  return typeof parent?.data?.name === 'string' ? `${parent.data.name} ${name}` : name
 }
 
 /**
@@ -356,14 +458,15 @@ export function autoAddress(entry: Entry, entries: readonly Entry[]): string | u
   if (typeOf(entry) !== 'place' || d?.kind !== 'building' || typeof d.name !== 'string' || typeof d.parent !== 'string') return undefined
   const byId = new Map(entries.map((e) => [idOf(e), e]))
   const parent = byId.get(d.parent)
-  const name = d.name.trim()
   const parentName = typeof parent?.data?.name === 'string' ? parent.data.name : undefined
-  if (!parentName || !name.startsWith(`${parentName} `) || !/^\d/.test(name.slice(parentName.length + 1))) return undefined
+  if (!parentName) return undefined
+  const label = fullName(entry, entries)
+  if (!label || !label.startsWith(`${parentName} `) || !/^\d/.test(label.slice(parentName.length + 1))) return undefined
   const seen = new Set<string>()
   for (let at = parent; at && !seen.has(idOf(at)); at = typeof at.data?.parent === 'string' ? byId.get(at.data.parent) : undefined) {
     seen.add(idOf(at))
     const code = at.data?.postal_code
-    if (typeof code === 'string' && code && typeof at.data?.name === 'string') return `${name}, ${code} ${at.data.name}`
+    if (typeof code === 'string' && code && typeof at.data?.name === 'string') return `${label}, ${code} ${at.data.name}`
   }
   return undefined
 }
@@ -510,3 +613,5 @@ export function nextDates(rule: { rrule: string; start: string }, count = 3): st
     return []
   }
 }
+
+export { parseAddress, streetKey }

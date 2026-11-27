@@ -30,12 +30,17 @@ describe('references', () => {
     expect(checkRefs(content, lookup)).toEqual([{ path: '/about/1', message: '"gibts-nicht" does not exist' }])
   })
 
+  it('may lead from a content to another content', () => {
+    const content = { ...example('osterfeuer-tradition'), about: ['osterfeuer', 'osterfeuer-tradition'] }
+    expect(checkRefs(content, lookup)).toEqual([])
+  })
+
   it('lead to entries of an allowed type', () => {
     const content = { ...example('osterfeuer-tradition'), authors: ['elbdeich-festplatz'], about: ['01kb4z8m3q7xv2n5r6t9c0d1ae'] }
     const messages = checkRefs(content, lookup).map((i) => `${i.path}: ${i.message}`)
     expect(messages).toEqual([
       '/authors/0: "elbdeich-festplatz" is a place; allowed here: person, organization',
-      '/about/0: "01kb4z8m3q7xv2n5r6t9c0d1ae" is a object; allowed here: person, organization, place, event, thing',
+      '/about/0: "01kb4z8m3q7xv2n5r6t9c0d1ae" is a object; allowed here: person, organization, place, event, thing, content',
     ])
   })
 })

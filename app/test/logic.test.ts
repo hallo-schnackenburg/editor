@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { autoAddress, describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets, movedFile, renumbered, groupIndex, isGroup } from '../src/logic.js'
+import { autoAddress, similarEntries, findHolder, fullName, holderOf, parseAddress, streetKey, describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets, movedFile, renumbered, groupIndex, isGroup, type Entry } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -366,5 +366,72 @@ describe('the address of a building', () => {
   it('does not run in circles when places lie in each other', () => {
     const loop = [place('a', 'name: A\nkind: locality\nparent: b\n'), place('b', 'name: B\nkind: locality\nparent: a\n')]
     expect(autoAddress(place('a/1', 'name: A 1\nkind: building\nparent: a\n'), loop)).toBeUndefined()
+  })
+})
+
+describe('finding where a house belongs', () => {
+  const place = (id: string, extra: string) => makeEntry(`entities/places/${id}.yaml`, `id: ${id}\ntype: place\n${extra}`, 'sha')
+  const world = [
+    place('schnackenburg', 'name: Schnackenburg\nkind: locality\npostal_code: "29493"\n'),
+    place('schnackenburg/niedernstrasse', 'name: Niedernstraße\nkind: street\nparent: schnackenburg\n'),
+    place('gummern', 'name: Gummern\nkind: locality\nparent: schnackenburg\n'),
+    place('schnackenburg/dorfstrasse', 'name: Dorfstraße\nkind: street\nparent: schnackenburg\n'),
+    place('kapern', 'name: Kapern\nkind: locality\n'),
+    place('kapern/dorfstrasse', 'name: Dorfstraße\nkind: street\nparent: kapern\n'),
+  ]
+
+  it('compares street names however they are written', () => {
+    for (const s of ['Niedernstraße', 'niedernstrasse', 'Niedernstr.', 'Niedernstr', 'NIEDERN-STRASSE']) expect(streetKey(s), s).toBe('niedernstrasse')
+  })
+
+  it('splits an address into street, number, postal code and town', () => {
+    expect(parseAddress('Niedernstr. 3a, 29493 Schnackenburg')).toEqual({ street: 'Niedernstr.', number: '3a', postal: '29493', town: 'Schnackenburg' })
+    expect(parseAddress('Gummern 10')).toEqual({ street: 'Gummern', number: '10' })
+    expect(parseAddress('Alter Postweg 25, Schnackenburg')).toEqual({ street: 'Alter Postweg', number: '25', town: 'Schnackenburg' })
+    expect(parseAddress('Gasthaus Holtorf')).toBeUndefined()
+  })
+
+  it('finds the one street or place of that name, and none when it is not clear', () => {
+    expect(findHolder('Niedernstr.', undefined, world)).toBe(world[1])
+    expect(findHolder('Gummern', undefined, world)).toBe(world[2])
+    expect(findHolder('Dorfstraße', undefined, world)).toBeUndefined()
+    expect(findHolder('Dorfstraße', 'Kapern', world)).toBe(world[5])
+    expect(findHolder('Dorfstraße', 'Schnackenburg', world)).toBe(world[3])
+    expect(findHolder('Nirgends', undefined, world)).toBeUndefined()
+  })
+
+  it('says where a house without a parent belongs, by its address or else its name', () => {
+    const house = (extra: string) => place('schnackenburg/x', `kind: building\n${extra}`)
+    expect(holderOf(house('name: Niedernstraße 3\n'), world)?.parent).toBe(world[1])
+    expect(holderOf(house('name: Haus\naddress: Gummern 10, 29493 Schnackenburg\n'), world)).toMatchObject({ number: '10' })
+    expect(holderOf(house('name: Niedernstraße 3\nparent: gummern\n'), world)).toBeUndefined()
+    expect(holderOf(place('x', 'name: Niedernstraße 3\nkind: street\n'), world)).toBeUndefined()
+  })
+
+  it('names a building that is only a number after its street, and makes its address from that', () => {
+    const house = place('schnackenburg/niedernstrasse/3', 'name: "3"\nkind: building\nparent: schnackenburg/niedernstrasse\n')
+    expect(fullName(house, world)).toBe('Niedernstraße 3')
+    expect(autoAddress(house, world)).toBe('Niedernstraße 3, 29493 Schnackenburg')
+    expect(fullName(place('x', 'name: Feuerwehr\nkind: building\nparent: gummern\n'), world)).toBe('Feuerwehr')
+  })
+})
+
+describe('entries a new one may be a second of', () => {
+  const place = (id: string, name: string) => makeEntry(`entities/places/${id}.yaml`, `id: ${id}\ntype: place\nname: ${name}\nkind: other\n`, 'sha')
+  const org = (id: string, name: string) => makeEntry(`entities/organizations/${id}.yaml`, `id: ${id}\ntype: organization\nname: ${name}\n`, 'sha')
+  const all = [place('aussichtspunkt', 'Aussichtspunkt'), place('marktplatz', 'Marktplatz'), place('fischerhaus', 'Fischerhaus'), org('aussichtsturm', 'Aussichtsturm')]
+  const names = (found: Entry[]) => found.map((e) => e.data?.name)
+
+  it('finds the same name written differently, one inside the other, and the same stem', () => {
+    expect(names(similarEntries(place('neu', 'Aussichtsturm'), all))).toEqual(['Aussichtspunkt'])
+    expect(names(similarEntries(place('neu', 'Markt-Platz'), all))).toEqual(['Marktplatz'])
+    expect(names(similarEntries(place('neu', 'Fischerhaus am Hafen'), all))).toEqual(['Fischerhaus'])
+    expect(names(similarEntries(place('neu', 'Fischerhauss'), all))).toEqual(['Fischerhaus'])
+  })
+
+  it('looks only at entries of the same type, never at itself, and not at names that are too short or not alike', () => {
+    expect(similarEntries(place('x', 'Hafen'), all)).toEqual([])
+    expect(similarEntries(place('x', 'Ab'), all)).toEqual([])
+    expect(similarEntries(all[1], all)).toEqual([])
   })
 })
